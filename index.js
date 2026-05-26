@@ -423,19 +423,22 @@ app.delete('/api/admin/users/:id', authenticateToken, requireAdmin, async (req, 
   }
 });
 
-// 4. Edit product price
-app.put('/api/admin/products/:id/price', authenticateToken, requireAdmin, async (req, res) => {
-  const { price } = req.body;
+// 4. Edit product details (Full Edit)
+app.put('/api/admin/products/:id', authenticateToken, requireAdmin, async (req, res) => {
+  const { name, price, category, unit, manufacturer } = req.body;
   const { id } = req.params;
 
-  if (price === undefined || isNaN(price) || price < 0) {
-    return res.status(400).json({ message: 'Некорректная цена' });
+  if (!name || price === undefined || isNaN(price) || price < 0 || !category || !unit || !manufacturer) {
+    return res.status(400).json({ message: 'Все поля обязательны для заполнения и должны быть корректными' });
   }
 
   try {
     const result = await pool.query(
-      'UPDATE products SET price = $1 WHERE id = $2 RETURNING id, name, price',
-      [price, id]
+      `UPDATE products 
+       SET name = $1, price = $2, category = $3, unit = $4, manufacturer = $5 
+       WHERE id = $6 
+       RETURNING id, name, price, category, unit, manufacturer`,
+      [name, parseFloat(price), category, unit, manufacturer, id]
     );
 
     if (result.rows.length === 0) {
@@ -443,7 +446,7 @@ app.put('/api/admin/products/:id/price', authenticateToken, requireAdmin, async 
     }
 
     res.json({
-      message: 'Цена успешно обновлена',
+      message: 'Товар успешно обновлен',
       product: {
         ...result.rows[0],
         price: parseFloat(result.rows[0].price)
@@ -451,7 +454,7 @@ app.put('/api/admin/products/:id/price', authenticateToken, requireAdmin, async 
     });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ message: 'Ошибка сервера при обновлении цены' });
+    res.status(500).json({ message: 'Ошибка сервера при обновлении товара' });
   }
 });
 
