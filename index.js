@@ -89,6 +89,21 @@ const initDatabase = async () => {
     await client.query(`
       ALTER TABLE users ADD COLUMN IF NOT EXISTS address TEXT;
     `);
+    await client.query(`
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS bin_iin VARCHAR(50);
+    `);
+    await client.query(`
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS bank VARCHAR(255);
+    `);
+    await client.query(`
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS kbe VARCHAR(20);
+    `);
+    await client.query(`
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS bic VARCHAR(50);
+    `);
+    await client.query(`
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS account_number VARCHAR(100);
+    `);
 
     // 2. Create products table
     await client.query(`
@@ -168,7 +183,7 @@ initDatabase();
 
 // 1. Register User (Restaurant)
 app.post('/api/auth/register', async (req, res) => {
-  const { name, email, password, phone, address } = req.body;
+  const { name, email, password, phone, address, bin_iin, bank, kbe, bic, account_number } = req.body;
 
   if (!name || !email || !password || !phone || !address) {
     return res.status(400).json({ message: 'Все поля обязательны для заполнения' });
@@ -184,8 +199,10 @@ app.post('/api/auth/register', async (req, res) => {
     const hashedPassword = await bcrypt.hash(password, salt);
 
     const newUser = await pool.query(
-      'INSERT INTO users (name, email, password, role, order_limit, phone, address) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, name, email, role, order_limit, phone, address, created_at',
-      [name, email.toLowerCase(), hashedPassword, 'restaurant', 500000.00, phone, address]
+      `INSERT INTO users (name, email, password, role, order_limit, phone, address, bin_iin, bank, kbe, bic, account_number) 
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) 
+       RETURNING id, name, email, role, order_limit, phone, address, bin_iin, bank, kbe, bic, account_number, created_at`,
+      [name, email.toLowerCase(), hashedPassword, 'restaurant', 500000.00, phone, address, bin_iin, bank, kbe, bic, account_number]
     );
 
     const token = jwt.sign(
@@ -240,6 +257,11 @@ app.post('/api/auth/login', async (req, res) => {
         order_limit: parseFloat(user.order_limit),
         phone: user.phone,
         address: user.address,
+        bin_iin: user.bin_iin,
+        bank: user.bank,
+        kbe: user.kbe,
+        bic: user.bic,
+        account_number: user.account_number,
         created_at: user.created_at
       }
     });
@@ -252,7 +274,7 @@ app.post('/api/auth/login', async (req, res) => {
 // 3. Get Authenticated User Profile
 app.get('/api/auth/me', authenticateToken, async (req, res) => {
   try {
-    const result = await pool.query('SELECT id, name, email, role, order_limit, phone, address, created_at FROM users WHERE id = $1', [req.user.id]);
+    const result = await pool.query('SELECT id, name, email, role, order_limit, phone, address, bin_iin, bank, kbe, bic, account_number, created_at FROM users WHERE id = $1', [req.user.id]);
     if (result.rows.length === 0) {
       return res.status(404).json({ message: 'Пользователь не найден' });
     }
@@ -267,11 +289,11 @@ app.get('/api/auth/me', authenticateToken, async (req, res) => {
 
 // 4. Update Authenticated User Profile
 app.put('/api/auth/profile', authenticateToken, async (req, res) => {
-  const { phone, address, password } = req.body;
+  const { phone, address, password, bin_iin, bank, kbe, bic, account_number } = req.body;
 
   try {
-    let query = 'UPDATE users SET phone = $1, address = $2';
-    const params = [phone, address, req.user.id];
+    let query = 'UPDATE users SET phone = $1, address = $2, bin_iin = $4, bank = $5, kbe = $6, bic = $7, account_number = $8';
+    const params = [phone, address, req.user.id, bin_iin, bank, kbe, bic, account_number];
 
     if (password) {
       if (password.length < 6) {
@@ -279,13 +301,13 @@ app.put('/api/auth/profile', authenticateToken, async (req, res) => {
       }
       const salt = await bcrypt.genSalt(10);
       const hashedPassword = await bcrypt.hash(password, salt);
-      query += ', password = $4 WHERE id = $3';
+      query += ', password = $9 WHERE id = $3';
       params.push(hashedPassword);
     } else {
       query += ' WHERE id = $3';
     }
 
-    query += ' RETURNING id, name, email, role, order_limit, phone, address, created_at';
+    query += ' RETURNING id, name, email, role, order_limit, phone, address, bin_iin, bank, kbe, bic, account_number, created_at';
 
     const result = await pool.query(query, params);
 
