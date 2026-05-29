@@ -396,9 +396,13 @@ app.get('/api/orders', authenticateToken, async (req, res) => {
 
     let result;
     if (role === 'admin') {
-      // Admin sees ALL orders with restaurant details
       result = await pool.query(`
-        SELECT o.id, o.total_price, o.items, o.created_at, u.name as restaurant_name, u.email as restaurant_email
+        SELECT o.id, o.total_price, o.items, o.created_at, 
+               u.name as restaurant_name, u.email as restaurant_email,
+               u.phone as restaurant_phone, u.address as restaurant_address,
+               u.bin_iin as restaurant_bin_iin, u.bank as restaurant_bank,
+               u.kbe as restaurant_kbe, u.bic as restaurant_bic,
+               u.account_number as restaurant_account_number
         FROM orders o
         JOIN users u ON o.user_id = u.id
         ORDER BY o.created_at DESC
@@ -526,6 +530,94 @@ app.put('/api/admin/products/:id', authenticateToken, requireAdmin, async (req, 
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: 'Ошибка сервера при обновлении товара' });
+  }
+});
+
+app.delete('/api/admin/products/:id', authenticateToken, requireAdmin, async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const result = await pool.query('DELETE FROM products WHERE id = $1 RETURNING id, name', [parseInt(id, 10)]);
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'Товар не найден' });
+    }
+    res.json({ message: `Товар "${result.rows[0].name}" успешно удален` });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Ошибка сервера при удалении товара' });
+  }
+});
+
+app.post('/api/admin/products', authenticateToken, requireAdmin, async (req, res) => {
+  const { name, price, category, unit, manufacturer } = req.body;
+
+  if (!name || price === undefined || isNaN(price) || price < 0 || !category || !unit || !manufacturer) {
+    return res.status(400).json({ message: 'Все поля обязательны для заполнения и должны быть корректными' });
+  }
+
+  try {
+    await pool.query("SELECT setval('products_id_seq', COALESCE((SELECT MAX(id) FROM products), 0) + 1, false)");
+
+    const result = await pool.query(
+      `INSERT INTO products (name, price, category, unit, manufacturer) 
+       VALUES ($1, $2, $3, $4, $5) 
+       RETURNING id, name, price, category, unit, manufacturer`,
+      [name, parseFloat(price), category, unit, manufacturer]
+    );
+
+    res.status(201).json({
+      message: 'Товар успешно добавлен',
+      product: {
+        ...result.rows[0],
+        price: parseFloat(result.rows[0].price)
+      }
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Ошибка сервера при добавлении товара' });
+  }
+});
+
+app.put('/api/admin/orders/:id', authenticateToken, requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  const { items, totalPrice } = req.body;
+
+  if (!items || items.length === 0 || totalPrice === undefined || isNaN(totalPrice)) {
+    return res.status(400).json({ message: 'Некорректные данные накладной' });
+  }
+
+  try {
+    const updateResult = await pool.query(
+      'UPDATE orders SET items = $1, total_price = $2 WHERE id = $3 RETURNING id',
+      [JSON.stringify(items), totalPrice, parseInt(id, 10)]
+    );
+
+    if (updateResult.rows.length === 0) {
+      return res.status(404).json({ message: 'Накладная не найдена' });
+    }
+
+    const result = await pool.query(`
+      SELECT o.id, o.total_price, o.items, o.created_at, 
+             u.name as restaurant_name, u.email as restaurant_email,
+             u.phone as restaurant_phone, u.address as restaurant_address,
+             u.bin_iin as restaurant_bin_iin, u.bank as restaurant_bank,
+             u.kbe as restaurant_kbe, u.bic as restaurant_bic,
+             u.account_number as restaurant_account_number
+      FROM orders o
+      JOIN users u ON o.user_id = u.id
+      WHERE o.id = $1
+    `, [parseInt(id, 10)]);
+
+    res.json({
+      message: 'Накладная успешно обновлена',
+      order: {
+        ...result.rows[0],
+        total_price: parseFloat(result.rows[0].total_price)
+      }
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Ошибка сервера при обновлении накладной' });
   }
 });
 
