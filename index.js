@@ -84,6 +84,9 @@ const initDatabase = async () => {
       ALTER TABLE users ADD COLUMN IF NOT EXISTS order_limit NUMERIC(12, 2) DEFAULT 500000.00;
     `);
     await client.query(`
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS discount NUMERIC(5, 2) DEFAULT 0.00;
+    `);
+    await client.query(`
       ALTER TABLE users ADD COLUMN IF NOT EXISTS phone VARCHAR(50);
     `);
     await client.query(`
@@ -128,6 +131,14 @@ const initDatabase = async () => {
       );
     `);
 
+    // Ensure columns discount and original_price exist in orders table
+    await client.query(`
+      ALTER TABLE orders ADD COLUMN IF NOT EXISTS discount NUMERIC(5, 2) DEFAULT 0.00;
+    `);
+    await client.query(`
+      ALTER TABLE orders ADD COLUMN IF NOT EXISTS original_price NUMERIC(12, 2);
+    `);
+
     // 4. Seed Default Admin User
     const adminEmail = 'admin@gastromir.kz';
     const adminCheck = await client.query('SELECT * FROM users WHERE email = $1', [adminEmail]);
@@ -169,6 +180,53 @@ const initDatabase = async () => {
       console.log(`Products table checked. Found ${count} products.`);
     }
 
+    // Seed new user-requested categories and products if not exists
+    const newItems = [
+      { category: 'НАПИТКИ', name: 'Вода', unit: 'шт' },
+      { category: 'НАПИТКИ', name: 'Газированные напитки', unit: 'шт' },
+      { category: 'НАПИТКИ', name: 'Соки и нектары', unit: 'шт' },
+      { category: 'НАПИТКИ', name: 'Морсы', unit: 'шт' },
+      { category: 'НАПИТКИ', name: 'Энергетические напитки', unit: 'шт' },
+      { category: 'НАПИТКИ', name: 'Чай и кофе', unit: 'шт' },
+      { category: 'НАПИТКИ', name: 'Сиропы и основы', unit: 'шт' },
+
+      { category: 'СЛАДОСТИ', name: 'Шоколад', unit: 'шт' },
+      { category: 'СЛАДОСТИ', name: 'Конфеты', unit: 'шт' },
+      { category: 'СЛАДОСТИ', name: 'Печенье', unit: 'шт' },
+
+      { category: 'Сублимированные ягоды и фрукты', name: 'Сублимированные ягоды', unit: 'шт' },
+      { category: 'Сублимированные ягоды и фрукты', name: 'Сублимированные фрукты', unit: 'шт' },
+
+      { category: 'ГОТОВАЯ ПРОДУКЦИЯ', name: 'Выпечка', unit: 'шт' },
+      { category: 'ГОТОВАЯ ПРОДУКЦИЯ', name: 'Десерты', unit: 'шт' },
+      { category: 'ГОТОВАЯ ПРОДУКЦИЯ', name: 'Сладости', unit: 'шт' },
+      { category: 'ГОТОВАЯ ПРОДУКЦИЯ', name: 'Чизкейки', unit: 'шт' },
+
+      { category: 'УПАКОВКА И ДОСТАВКА', name: 'Пицца (коробки)', unit: 'шт' },
+      { category: 'УПАКОВКА И ДОСТАВКА', name: 'Супы и горячие (контейнеры)', unit: 'шт' },
+      { category: 'УПАКОВКА И ДОСТАВКА', name: 'Ланч-боксы (основные блюда)', unit: 'шт' },
+      { category: 'УПАКОВКА И ДОСТАВКА', name: 'Салаты (контейнеры)', unit: 'шт' },
+      { category: 'УПАКОВКА И ДОСТАВКА', name: 'Стаканы и напитки (стаканы, крышки, трубочки)', unit: 'шт' },
+      { category: 'УПАКОВКА И ДОСТАВКА', name: 'Соусы (соусники)', unit: 'шт' },
+      { category: 'УПАКОВКА И ДОСТАВКА', name: 'Одноразовая посуда (приборы, тарелки, салфетки)', unit: 'шт' },
+      { category: 'УПАКОВКА И ДОСТАВКА', name: 'Пакеты и упаковка (крафт, доставка)', unit: 'шт' }
+    ];
+
+    let seededCount = 0;
+    for (const item of newItems) {
+      const check = await client.query('SELECT id FROM products WHERE name = $1 AND category = $2', [item.name, item.category]);
+      if (check.rows.length === 0) {
+        await client.query(
+          `INSERT INTO products (name, price, category, unit, manufacturer) VALUES ($1, 0.00, $2, $3, 'Не указан')`,
+          [item.name, item.category, item.unit]
+        );
+        seededCount++;
+      }
+    }
+    if (seededCount > 0) {
+      console.log(`Seeded ${seededCount} new custom products successfully into database.`);
+    }
+
     console.log('Neon Database full migration & seeding finished successfully.');
   } catch (err) {
     console.error('Error during database initialization:', err);
@@ -199,9 +257,9 @@ app.post('/api/auth/register', async (req, res) => {
     const hashedPassword = await bcrypt.hash(password, salt);
 
     const newUser = await pool.query(
-      `INSERT INTO users (name, email, password, role, order_limit, phone, address, bin_iin, bank, kbe, bic, account_number) 
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) 
-       RETURNING id, name, email, role, order_limit, phone, address, bin_iin, bank, kbe, bic, account_number, created_at`,
+      `INSERT INTO users (name, email, password, role, order_limit, phone, address, bin_iin, bank, kbe, bic, account_number, discount) 
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 0.00) 
+       RETURNING id, name, email, role, order_limit, phone, address, bin_iin, bank, kbe, bic, account_number, discount, created_at`,
       [name, email.toLowerCase(), hashedPassword, 'restaurant', 500000.00, phone, address, bin_iin, bank, kbe, bic, account_number]
     );
 
@@ -213,7 +271,11 @@ app.post('/api/auth/register', async (req, res) => {
 
     res.status(201).json({
       token,
-      user: newUser.rows[0]
+      user: {
+        ...newUser.rows[0],
+        order_limit: parseFloat(newUser.rows[0].order_limit),
+        discount: parseFloat(newUser.rows[0].discount || 0)
+      }
     });
   } catch (err) {
     console.error(err);
@@ -255,6 +317,7 @@ app.post('/api/auth/login', async (req, res) => {
         email: user.email,
         role: user.role,
         order_limit: parseFloat(user.order_limit),
+        discount: parseFloat(user.discount || 0),
         phone: user.phone,
         address: user.address,
         bin_iin: user.bin_iin,
@@ -274,12 +337,13 @@ app.post('/api/auth/login', async (req, res) => {
 // 3. Get Authenticated User Profile
 app.get('/api/auth/me', authenticateToken, async (req, res) => {
   try {
-    const result = await pool.query('SELECT id, name, email, role, order_limit, phone, address, bin_iin, bank, kbe, bic, account_number, created_at FROM users WHERE id = $1', [req.user.id]);
+    const result = await pool.query('SELECT id, name, email, role, order_limit, discount, phone, address, bin_iin, bank, kbe, bic, account_number, created_at FROM users WHERE id = $1', [req.user.id]);
     if (result.rows.length === 0) {
       return res.status(404).json({ message: 'Пользователь не найден' });
     }
     const user = result.rows[0];
     user.order_limit = parseFloat(user.order_limit);
+    user.discount = parseFloat(user.discount || 0);
     res.json({ user });
   } catch (err) {
     console.error(err);
@@ -307,7 +371,7 @@ app.put('/api/auth/profile', authenticateToken, async (req, res) => {
       query += ' WHERE id = $3';
     }
 
-    query += ' RETURNING id, name, email, role, order_limit, phone, address, bin_iin, bank, kbe, bic, account_number, created_at';
+    query += ' RETURNING id, name, email, role, order_limit, discount, phone, address, bin_iin, bank, kbe, bic, account_number, created_at';
 
     const result = await pool.query(query, params);
 
@@ -317,6 +381,7 @@ app.put('/api/auth/profile', authenticateToken, async (req, res) => {
 
     const user = result.rows[0];
     user.order_limit = parseFloat(user.order_limit);
+    user.discount = parseFloat(user.discount || 0);
 
     res.json({
       message: 'Профиль успешно обновлен',
@@ -349,7 +414,7 @@ app.get('/api/products', async (req, res) => {
 
 // 1. Place New Order (Checkout)
 app.post('/api/orders', authenticateToken, async (req, res) => {
-  const { items, totalPrice } = req.body;
+  const { items, totalPrice, discount, originalPrice } = req.body;
 
   if (!items || items.length === 0 || !totalPrice) {
     return res.status(400).json({ message: 'Корзина пуста' });
@@ -357,12 +422,13 @@ app.post('/api/orders', authenticateToken, async (req, res) => {
 
   try {
     // Fetch current user details
-    const userQuery = await pool.query('SELECT order_limit FROM users WHERE id = $1', [req.user.id]);
+    const userQuery = await pool.query('SELECT order_limit, discount FROM users WHERE id = $1', [req.user.id]);
     if (userQuery.rows.length === 0) {
       return res.status(404).json({ message: 'Ресторан не найден' });
     }
 
     const orderLimit = parseFloat(userQuery.rows[0].order_limit);
+    const userDiscount = parseFloat(userQuery.rows[0].discount || 0);
 
     // Verify limit constraint
     if (parseFloat(totalPrice) > orderLimit) {
@@ -373,13 +439,18 @@ app.post('/api/orders', authenticateToken, async (req, res) => {
 
     // Insert order record
     const newOrder = await pool.query(
-      'INSERT INTO orders (user_id, total_price, items) VALUES ($1, $2, $3) RETURNING id, total_price, items, created_at',
-      [req.user.id, totalPrice, JSON.stringify(items)]
+      'INSERT INTO orders (user_id, total_price, items, discount, original_price) VALUES ($1, $2, $3, $4, $5) RETURNING id, total_price, items, discount, original_price, created_at',
+      [req.user.id, totalPrice, JSON.stringify(items), discount !== undefined ? discount : userDiscount, originalPrice !== undefined ? originalPrice : totalPrice]
     );
 
     res.status(201).json({
       message: 'Заказ успешно оформлен',
-      order: newOrder.rows[0]
+      order: {
+        ...newOrder.rows[0],
+        total_price: parseFloat(newOrder.rows[0].total_price),
+        discount: parseFloat(newOrder.rows[0].discount || 0),
+        original_price: parseFloat(newOrder.rows[0].original_price || newOrder.rows[0].total_price)
+      }
     });
   } catch (err) {
     console.error(err);
@@ -397,7 +468,7 @@ app.get('/api/orders', authenticateToken, async (req, res) => {
     let result;
     if (role === 'admin') {
       result = await pool.query(`
-        SELECT o.id, o.total_price, o.items, o.created_at, 
+        SELECT o.id, o.total_price, o.items, o.discount, o.original_price, o.created_at, 
                u.name as restaurant_name, u.email as restaurant_email,
                u.phone as restaurant_phone, u.address as restaurant_address,
                u.bin_iin as restaurant_bin_iin, u.bank as restaurant_bank,
@@ -410,14 +481,16 @@ app.get('/api/orders', authenticateToken, async (req, res) => {
     } else {
       // Restaurant sees only their own orders
       result = await pool.query(
-        'SELECT id, total_price, items, created_at FROM orders WHERE user_id = $1 ORDER BY created_at DESC',
+        'SELECT id, total_price, items, discount, original_price, created_at FROM orders WHERE user_id = $1 ORDER BY created_at DESC',
         [req.user.id]
       );
     }
 
     const formattedOrders = result.rows.map(o => ({
       ...o,
-      total_price: parseFloat(o.total_price)
+      total_price: parseFloat(o.total_price),
+      discount: parseFloat(o.discount || 0),
+      original_price: parseFloat(o.original_price || o.total_price)
     }));
 
     res.json(formattedOrders);
@@ -433,14 +506,15 @@ app.get('/api/orders', authenticateToken, async (req, res) => {
 app.get('/api/admin/users', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT id, name, email, order_limit, created_at 
+      `SELECT id, name, email, order_limit, discount, created_at 
        FROM users 
        WHERE role = 'restaurant' 
        ORDER BY created_at DESC`
     );
     const restaurants = result.rows.map(r => ({
       ...r,
-      order_limit: parseFloat(r.order_limit)
+      order_limit: parseFloat(r.order_limit),
+      discount: parseFloat(r.discount || 0)
     }));
     res.json(restaurants);
   } catch (err) {
@@ -478,6 +552,38 @@ app.put('/api/admin/users/:id/limit', authenticateToken, requireAdmin, async (re
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: 'Ошибка сервера при обновлении лимита' });
+  }
+});
+
+// 2.1 Set discount for user
+app.put('/api/admin/users/:id/discount', authenticateToken, requireAdmin, async (req, res) => {
+  const { discount } = req.body;
+  const { id } = req.params;
+
+  if (discount === undefined || isNaN(discount) || discount < 0 || discount > 100) {
+    return res.status(400).json({ message: 'Некорректный процент скидки (должен быть от 0 до 100)' });
+  }
+
+  try {
+    const result = await pool.query(
+      'UPDATE users SET discount = $1 WHERE id = $2 RETURNING id, name, discount',
+      [discount, id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'Ресторан не найден' });
+    }
+
+    res.json({
+      message: 'Скидка успешно обновлена',
+      user: {
+        ...result.rows[0],
+        discount: parseFloat(result.rows[0].discount)
+      }
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Ошибка сервера при обновлении скидки' });
   }
 });
 
@@ -580,7 +686,7 @@ app.post('/api/admin/products', authenticateToken, requireAdmin, async (req, res
 
 app.put('/api/admin/orders/:id', authenticateToken, requireAdmin, async (req, res) => {
   const { id } = req.params;
-  const { items, totalPrice } = req.body;
+  const { items, totalPrice, discount, originalPrice } = req.body;
 
   if (!items || items.length === 0 || totalPrice === undefined || isNaN(totalPrice)) {
     return res.status(400).json({ message: 'Некорректные данные накладной' });
@@ -588,8 +694,8 @@ app.put('/api/admin/orders/:id', authenticateToken, requireAdmin, async (req, re
 
   try {
     const updateResult = await pool.query(
-      'UPDATE orders SET items = $1, total_price = $2 WHERE id = $3 RETURNING id',
-      [JSON.stringify(items), totalPrice, parseInt(id, 10)]
+      'UPDATE orders SET items = $1, total_price = $2, discount = $3, original_price = $4 WHERE id = $5 RETURNING id',
+      [JSON.stringify(items), totalPrice, discount || 0, originalPrice || totalPrice, parseInt(id, 10)]
     );
 
     if (updateResult.rows.length === 0) {
@@ -597,7 +703,7 @@ app.put('/api/admin/orders/:id', authenticateToken, requireAdmin, async (req, re
     }
 
     const result = await pool.query(`
-      SELECT o.id, o.total_price, o.items, o.created_at, 
+      SELECT o.id, o.total_price, o.items, o.discount, o.original_price, o.created_at, 
              u.name as restaurant_name, u.email as restaurant_email,
              u.phone as restaurant_phone, u.address as restaurant_address,
              u.bin_iin as restaurant_bin_iin, u.bank as restaurant_bank,
@@ -612,7 +718,9 @@ app.put('/api/admin/orders/:id', authenticateToken, requireAdmin, async (req, re
       message: 'Накладная успешно обновлена',
       order: {
         ...result.rows[0],
-        total_price: parseFloat(result.rows[0].total_price)
+        total_price: parseFloat(result.rows[0].total_price),
+        discount: parseFloat(result.rows[0].discount || 0),
+        original_price: parseFloat(result.rows[0].original_price || result.rows[0].total_price)
       }
     });
   } catch (err) {
