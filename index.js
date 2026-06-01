@@ -182,34 +182,34 @@ const initDatabase = async () => {
 
     // Seed new user-requested categories and products if not exists
     const newItems = [
-      { category: 'НАПИТКИ', name: 'Вода', unit: 'шт' },
-      { category: 'НАПИТКИ', name: 'Газированные напитки', unit: 'шт' },
-      { category: 'НАПИТКИ', name: 'Соки и нектары', unit: 'шт' },
-      { category: 'НАПИТКИ', name: 'Морсы', unit: 'шт' },
-      { category: 'НАПИТКИ', name: 'Энергетические напитки', unit: 'шт' },
-      { category: 'НАПИТКИ', name: 'Чай и кофе', unit: 'шт' },
-      { category: 'НАПИТКИ', name: 'Сиропы и основы', unit: 'шт' },
+      { category: 'Напитки', name: 'Вода', unit: 'шт' },
+      { category: 'Напитки', name: 'Газированные напитки', unit: 'шт' },
+      { category: 'Напитки', name: 'Соки и нектары', unit: 'шт' },
+      { category: 'Напитки', name: 'Морсы', unit: 'шт' },
+      { category: 'Напитки', name: 'Энергетические напитки', unit: 'шт' },
+      { category: 'Напитки', name: 'Чай и кофе', unit: 'шт' },
+      { category: 'Напитки', name: 'Сиропы и основы', unit: 'шт' },
 
-      { category: 'СЛАДОСТИ', name: 'Шоколад', unit: 'шт' },
-      { category: 'СЛАДОСТИ', name: 'Конфеты', unit: 'шт' },
-      { category: 'СЛАДОСТИ', name: 'Печенье', unit: 'шт' },
+      { category: 'Сладости', name: 'Шоколад', unit: 'шт' },
+      { category: 'Сладости', name: 'Конфеты', unit: 'шт' },
+      { category: 'Сладости', name: 'Печенье', unit: 'шт' },
 
       { category: 'Сублимированные ягоды и фрукты', name: 'Сублимированные ягоды', unit: 'шт' },
       { category: 'Сублимированные ягоды и фрукты', name: 'Сублимированные фрукты', unit: 'шт' },
 
-      { category: 'ГОТОВАЯ ПРОДУКЦИЯ', name: 'Выпечка', unit: 'шт' },
-      { category: 'ГОТОВАЯ ПРОДУКЦИЯ', name: 'Десерты', unit: 'шт' },
-      { category: 'ГОТОВАЯ ПРОДУКЦИЯ', name: 'Сладости', unit: 'шт' },
-      { category: 'ГОТОВАЯ ПРОДУКЦИЯ', name: 'Чизкейки', unit: 'шт' },
+      { category: 'Готовая продукция', name: 'Выпечка', unit: 'шт' },
+      { category: 'Готовая продукция', name: 'Десерты', unit: 'шт' },
+      { category: 'Готовая продукция', name: 'Сладости', unit: 'шт' },
+      { category: 'Готовая продукция', name: 'Чизкейки', unit: 'шт' },
 
-      { category: 'УПАКОВКА И ДОСТАВКА', name: 'Пицца (коробки)', unit: 'шт' },
-      { category: 'УПАКОВКА И ДОСТАВКА', name: 'Супы и горячие (контейнеры)', unit: 'шт' },
-      { category: 'УПАКОВКА И ДОСТАВКА', name: 'Ланч-боксы (основные блюда)', unit: 'шт' },
-      { category: 'УПАКОВКА И ДОСТАВКА', name: 'Салаты (контейнеры)', unit: 'шт' },
-      { category: 'УПАКОВКА И ДОСТАВКА', name: 'Стаканы и напитки (стаканы, крышки, трубочки)', unit: 'шт' },
-      { category: 'УПАКОВКА И ДОСТАВКА', name: 'Соусы (соусники)', unit: 'шт' },
-      { category: 'УПАКОВКА И ДОСТАВКА', name: 'Одноразовая посуда (приборы, тарелки, салфетки)', unit: 'шт' },
-      { category: 'УПАКОВКА И ДОСТАВКА', name: 'Пакеты и упаковка (крафт, доставка)', unit: 'шт' }
+      { category: 'Упаковка и доставка', name: 'Пицца (коробки)', unit: 'шт' },
+      { category: 'Упаковка и доставка', name: 'Супы и горячие (контейнеры)', unit: 'шт' },
+      { category: 'Упаковка и доставка', name: 'Ланч-боксы (основные блюда)', unit: 'шт' },
+      { category: 'Упаковка и доставка', name: 'Салаты (контейнеры)', unit: 'шт' },
+      { category: 'Упаковка и доставка', name: 'Стаканы и напитки (стаканы, крышки, трубочки)', unit: 'шт' },
+      { category: 'Упаковка и доставка', name: 'Соусы (соусники)', unit: 'шт' },
+      { category: 'Упаковка и доставка', name: 'Одноразовая посуда (приборы, тарелки, салфетки)', unit: 'шт' },
+      { category: 'Упаковка и доставка', name: 'Пакеты и упаковка (крафт, доставка)', unit: 'шт' }
     ];
 
     let seededCount = 0;
@@ -624,6 +624,34 @@ app.put('/api/admin/products/:id', authenticateToken, requireAdmin, async (req, 
 
     if (result.rows.length === 0) {
       return res.status(404).json({ message: 'Товар не найден' });
+    }
+
+    const newPrice = parseFloat(price);
+    const ordersRes = await pool.query('SELECT id, items, discount FROM orders');
+    for (const order of ordersRes.rows) {
+      let items = Array.isArray(order.items) ? order.items : (typeof order.items === 'string' ? JSON.parse(order.items) : []);
+      if (!Array.isArray(items)) continue;
+
+      let isUpdated = false;
+      for (const item of items) {
+        if (String(item.id) === String(id)) {
+          item.price = newPrice;
+          isUpdated = true;
+        }
+      }
+
+      if (isUpdated) {
+        const discount = parseFloat(order.discount || 0);
+        const originalPrice = items.reduce((sum, item) => {
+          return sum + (parseFloat(item.price || 0) * (parseFloat(item.quantity) || 0));
+        }, 0);
+        const totalPrice = Math.round((originalPrice * (1 - discount / 100)) * 100) / 100;
+
+        await pool.query(
+          'UPDATE orders SET items = $1, total_price = $2, original_price = $3 WHERE id = $4',
+          [JSON.stringify(items), totalPrice, originalPrice, order.id]
+        );
+      }
     }
 
     res.json({
