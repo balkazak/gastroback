@@ -152,32 +152,20 @@ const initDatabase = async () => {
       console.log('Seeded default admin account (admin@gastromir.kz / admin)');
     }
 
-    // 5. Seed Catalog Products from products.json if empty
-    const productsCheck = await client.query('SELECT COUNT(*) FROM products');
-    const count = parseInt(productsCheck.rows[0].count, 10);
-    if (count === 0) {
-      console.log('Products database is empty. Seeding products from products.json...');
-      const productsFilePath = path.join(process.cwd(), '../frontend/src/data/products.json');
-      if (fs.existsSync(productsFilePath)) {
-        const rawData = fs.readFileSync(productsFilePath, 'utf8');
-        const productsList = JSON.parse(rawData);
-        
-        // Batch inserting products
-        await client.query('BEGIN');
-        for (const item of productsList) {
-          await client.query(
-            `INSERT INTO products (id, name, price, category, unit, manufacturer) VALUES ($1, $2, $3, $4, $5, $6) 
-             ON CONFLICT (id) DO UPDATE SET price = EXCLUDED.price`,
-            [item.id, item.name, item.price, item.category, item.unit, item.manufacturer]
-          );
-        }
-        await client.query('COMMIT');
-        console.log(`Seeded ${productsList.length} products successfully into PostgreSQL.`);
-      } else {
-        console.warn(`Products seed file not found at: ${productsFilePath}`);
+    const productsFilePath = path.join(process.cwd(), '../frontend/src/data/products.json');
+    if (fs.existsSync(productsFilePath)) {
+      const rawData = fs.readFileSync(productsFilePath, 'utf8');
+      const productsList = JSON.parse(rawData);
+      await client.query('BEGIN');
+      for (const item of productsList) {
+        await client.query(
+          `INSERT INTO products (id, name, price, category, unit, manufacturer) VALUES ($1, $2, $3, $4, $5, $6) 
+           ON CONFLICT (id) DO UPDATE SET price = EXCLUDED.price, name = EXCLUDED.name, category = EXCLUDED.category, unit = EXCLUDED.unit, manufacturer = EXCLUDED.manufacturer`,
+          [item.id, item.name, item.price, item.category, item.unit, item.manufacturer]
+        );
       }
-    } else {
-      console.log(`Products table checked. Found ${count} products.`);
+      await client.query('COMMIT');
+      console.log(`Synchronized ${productsList.length} products successfully into PostgreSQL.`);
     }
 
     // Seed new user-requested categories and products if not exists
