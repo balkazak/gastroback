@@ -87,6 +87,15 @@ const initDatabase = async () => {
       ALTER TABLE users ADD COLUMN IF NOT EXISTS discount NUMERIC(5, 2) DEFAULT 0.00;
     `);
     await client.query(`
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS shipped_amount NUMERIC(12, 2) DEFAULT 0.00;
+    `);
+    await client.query(`
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS paid_amount NUMERIC(12, 2) DEFAULT 0.00;
+    `);
+    await client.query(`
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS overdue_amount NUMERIC(12, 2) DEFAULT 0.00;
+    `);
+    await client.query(`
       ALTER TABLE users ADD COLUMN IF NOT EXISTS phone VARCHAR(50);
     `);
     await client.query(`
@@ -137,6 +146,16 @@ const initDatabase = async () => {
     `);
     await client.query(`
       ALTER TABLE orders ADD COLUMN IF NOT EXISTS original_price NUMERIC(12, 2);
+    `);
+
+    // 3.1 Create payments table
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS payments (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        amount NUMERIC(12, 2) NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
     `);
 
     // 4. Seed Default Admin User
@@ -494,7 +513,7 @@ app.get('/api/orders', authenticateToken, async (req, res) => {
 app.get('/api/admin/users', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT id, name, email, order_limit, discount, created_at 
+      `SELECT id, name, email, order_limit, discount, shipped_amount, paid_amount, overdue_amount, created_at 
        FROM users 
        WHERE role = 'restaurant' 
        ORDER BY created_at DESC`
@@ -502,7 +521,10 @@ app.get('/api/admin/users', authenticateToken, requireAdmin, async (req, res) =>
     const restaurants = result.rows.map(r => ({
       ...r,
       order_limit: parseFloat(r.order_limit),
-      discount: parseFloat(r.discount || 0)
+      discount: parseFloat(r.discount || 0),
+      shipped_amount: parseFloat(r.shipped_amount || 0),
+      paid_amount: parseFloat(r.paid_amount || 0),
+      overdue_amount: parseFloat(r.overdue_amount || 0)
     }));
     res.json(restaurants);
   } catch (err) {
@@ -540,6 +562,165 @@ app.put('/api/admin/users/:id/limit', authenticateToken, requireAdmin, async (re
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: 'Ошибка сервера при обновлении лимита' });
+  }
+});
+
+// 2.0.1 Update settlements/debts details for user
+app.put('/api/admin/users/:id/debts', authenticateToken, requireAdmin, async (req, res) => {
+  const { shipped_amount, paid_amount, overdue_amount } = req.body;
+  const { id } = req.params;
+
+  if (shipped_amount === undefined || paid_amount === undefined || overdue_amount === undefined ||
+      isNaN(shipped_amount) || isNaN(paid_amount) || isNaN(overdue_amount)) {
+    return res.status(400).json({ message: 'Некорректные данные взаиморасчетов' });
+  }
+
+  try {
+    const result = await pool.query(
+      `UPDATE users 
+       SET shipped_amount = $1, paid_amount = $2, overdue_amount = $3 
+       WHERE id = $4 
+       RETURNING id, name, shipped_amount, paid_amount, overdue_amount`,
+      [parseFloat(shipped_amount), parseFloat(paid_amount), parseFloat(overdue_amount), id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'Ресторан не найден' });
+    }
+
+    res.json({
+      message: 'Данные взаиморасчетов успешно обновлены',
+      user: {
+        id: result.rows[0].id,
+        name: result.rows[0].name,
+        shipped_amount: parseFloat(result.rows[0].shipped_amount),
+        paid_amount: parseFloat(result.rows[0].paid_amount),
+        overdue_amount: parseFloat(result.rows[0].overdue_amount)
+      }
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Ошибка сервера при обновлении взаиморасчетов' });
+  }
+});
+
+// --- Payments Log APIs ---
+
+// 1. Get all payments (Admin only)
+app.get('/api/admin/payments', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT p.id, p.user_id, p.amount, p.created_at, u.name as restaurant_name 
+      FROM payments p
+      JOIN users u ON p.user_id = u.id
+      ORDER BY p.created_at DESC
+    `);
+    const payments = result.rows.map(p => ({
+      ...p,
+      amount: parseFloat(p.amount)
+    }));
+    res.json(payments);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Ошибка сервера при загрузке оплат' });
+  }
+});
+
+// 2. Add new payment transaction (Admin only)
+app.post('/api/admin/payments', authenticateToken, requireAdmin, async (req, res) => {
+  const { user_id, amount, created_at } = req.body;
+
+  if (!user_id || amount === undefined || isNaN(amount) || amount <= 0) {
+    return res.status(400).json({ message: 'Некорректная сумма или ресторан' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    
+    // Insert payment record (use custom created_at if provided)
+    const insertQuery = created_at 
+      ? 'INSERT INTO payments (user_id, amount, created_at) VALUES ($1, $2, $3) RETURNING id, user_id, amount, created_at'
+      : 'INSERT INTO payments (user_id, amount) VALUES ($1, $2) RETURNING id, user_id, amount, created_at';
+    
+    const insertParams = created_at ? [user_id, parseFloat(amount), created_at] : [user_id, parseFloat(amount)];
+    const paymentRes = await client.query(insertQuery, insertParams);
+
+    // Increment user paid_amount
+    await client.query(
+      'UPDATE users SET paid_amount = paid_amount + $1 WHERE id = $2',
+      [parseFloat(amount), user_id]
+    );
+
+    await client.query('COMMIT');
+    res.status(201).json({
+      message: 'Оплата успешно зарегистрирована',
+      payment: {
+        ...paymentRes.rows[0],
+        amount: parseFloat(paymentRes.rows[0].amount)
+      }
+    });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error(err);
+    res.status(500).json({ message: 'Ошибка сервера при регистрации оплаты' });
+  } finally {
+    client.release();
+  }
+});
+
+// 3. Delete a payment transaction (Admin only)
+app.delete('/api/admin/payments/:id', authenticateToken, requireAdmin, async (req, res) => {
+  const { id } = req.params;
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // Fetch the payment amount and user_id first
+    const paymentQuery = await client.query('SELECT user_id, amount FROM payments WHERE id = $1', [id]);
+    if (paymentQuery.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ message: 'Оплата не найдена' });
+    }
+
+    const { user_id, amount } = paymentQuery.rows[0];
+
+    // Delete payment record
+    await client.query('DELETE FROM payments WHERE id = $1', [id]);
+
+    // Decrement user paid_amount
+    await client.query(
+      'UPDATE users SET paid_amount = GREATEST(0, paid_amount - $1) WHERE id = $2',
+      [parseFloat(amount), user_id]
+    );
+
+    await client.query('COMMIT');
+    res.json({ message: 'Оплата успешно удалена' });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error(err);
+    res.status(500).json({ message: 'Ошибка сервера при удалении оплаты' });
+  } finally {
+    client.release();
+  }
+});
+
+// 4. Get own payments (Client only)
+app.get('/api/payments', authenticateToken, async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT id, amount, created_at FROM payments WHERE user_id = $1 ORDER BY created_at DESC',
+      [req.user.id]
+    );
+    const payments = result.rows.map(p => ({
+      ...p,
+      amount: parseFloat(p.amount)
+    }));
+    res.json(payments);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Ошибка сервера при получении истории оплат' });
   }
 });
 
