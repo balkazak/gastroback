@@ -16,7 +16,7 @@ const pool = new Pool({
 const run = async () => {
   const client = await pool.connect();
   try {
-    const productsFilePath = path.join(process.cwd(), '../frontend/src/data/products.json');
+    const productsFilePath = path.join(process.cwd(), '../front/src/data/products.json');
     if (fs.existsSync(productsFilePath)) {
       const rawData = fs.readFileSync(productsFilePath, 'utf8');
       const productsList = JSON.parse(rawData);

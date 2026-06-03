@@ -171,7 +171,7 @@ const initDatabase = async () => {
       console.log('Seeded default admin account (admin@gastromir.kz / admin)');
     }
 
-    const productsFilePath = path.join(process.cwd(), '../frontend/src/data/products.json');
+    const productsFilePath = path.join(process.cwd(), '../front/src/data/products.json');
     if (fs.existsSync(productsFilePath)) {
       const rawData = fs.readFileSync(productsFilePath, 'utf8');
       const productsList = JSON.parse(rawData);
@@ -701,6 +701,76 @@ app.delete('/api/admin/payments/:id', authenticateToken, requireAdmin, async (re
     await client.query('ROLLBACK');
     console.error(err);
     res.status(500).json({ message: 'Ошибка сервера при удалении оплаты' });
+  } finally {
+    client.release();
+  }
+});
+
+// Update a payment transaction (Admin only)
+app.put('/api/admin/payments/:id', authenticateToken, requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  const { amount, created_at, user_id } = req.body;
+
+  if (amount === undefined || isNaN(amount) || amount <= 0) {
+    return res.status(400).json({ message: 'Некорректная сумма оплаты' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // Fetch the old payment amount and user_id first
+    const paymentQuery = await client.query('SELECT user_id, amount FROM payments WHERE id = $1', [id]);
+    if (paymentQuery.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ message: 'Оплата не найдена' });
+    }
+
+    const oldPayment = paymentQuery.rows[0];
+    const oldAmount = parseFloat(oldPayment.amount);
+    const oldUserId = oldPayment.user_id;
+
+    // Use current request user_id or fall back to old user_id
+    const targetUserId = user_id ? parseInt(user_id, 10) : oldUserId;
+
+    // Update payment record
+    const updateQuery = created_at
+      ? 'UPDATE payments SET user_id = $1, amount = $2, created_at = $3 WHERE id = $4 RETURNING *'
+      : 'UPDATE payments SET user_id = $1, amount = $2 WHERE id = $3 RETURNING *';
+    
+    const updateParams = created_at ? [targetUserId, parseFloat(amount), created_at, id] : [targetUserId, parseFloat(amount), id];
+    const updateRes = await client.query(updateQuery, updateParams);
+
+    // Adjust user paid_amount:
+    if (oldUserId === targetUserId) {
+      const diff = parseFloat(amount) - oldAmount;
+      await client.query(
+        'UPDATE users SET paid_amount = paid_amount + $1 WHERE id = $2',
+        [diff, targetUserId]
+      );
+    } else {
+      await client.query(
+        'UPDATE users SET paid_amount = GREATEST(0, paid_amount - $1) WHERE id = $2',
+        [oldAmount, oldUserId]
+      );
+      await client.query(
+        'UPDATE users SET paid_amount = paid_amount + $1 WHERE id = $2',
+        [parseFloat(amount), targetUserId]
+      );
+    }
+
+    await client.query('COMMIT');
+    res.json({
+      message: 'Оплата успешно изменена',
+      payment: {
+        ...updateRes.rows[0],
+        amount: parseFloat(updateRes.rows[0].amount)
+      }
+    });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error(err);
+    res.status(500).json({ message: 'Ошибка сервера при обновлении оплаты' });
   } finally {
     client.release();
   }
