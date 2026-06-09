@@ -171,67 +171,71 @@ const initDatabase = async () => {
       console.log('Seeded default admin account (admin@gastromir.kz / admin)');
     }
 
-    const productsFilePath = path.join(process.cwd(), '../frontend/src/data/products.json');
-    if (fs.existsSync(productsFilePath)) {
-      const rawData = fs.readFileSync(productsFilePath, 'utf8');
-      const productsList = JSON.parse(rawData);
-      await client.query('BEGIN');
-      for (const item of productsList) {
-        await client.query(
-          `INSERT INTO products (id, name, price, category, unit, manufacturer) VALUES ($1, $2, $3, $4, $5, $6) 
-           ON CONFLICT (id) DO UPDATE SET price = EXCLUDED.price, name = EXCLUDED.name, category = EXCLUDED.category, unit = EXCLUDED.unit, manufacturer = EXCLUDED.manufacturer`,
-          [item.id, item.name, item.price, item.category, item.unit, item.manufacturer]
-        );
+    const countResult = await client.query('SELECT COUNT(*) FROM products');
+    const isDbEmpty = parseInt(countResult.rows[0].count, 10) === 0;
+
+    if (isDbEmpty) {
+      const productsFilePath = path.join(process.cwd(), '../frontend/src/data/products.json');
+      if (fs.existsSync(productsFilePath)) {
+        const rawData = fs.readFileSync(productsFilePath, 'utf8');
+        const productsList = JSON.parse(rawData);
+        await client.query('BEGIN');
+        for (const item of productsList) {
+          await client.query(
+            `INSERT INTO products (id, name, price, category, unit, manufacturer) VALUES ($1, $2, $3, $4, $5, $6) 
+             ON CONFLICT (id) DO UPDATE SET price = EXCLUDED.price, name = EXCLUDED.name, category = EXCLUDED.category, unit = EXCLUDED.unit, manufacturer = EXCLUDED.manufacturer`,
+            [item.id, item.name, item.price, item.category, item.unit, item.manufacturer]
+          );
+        }
+        await client.query('COMMIT');
+        console.log(`Synchronized ${productsList.length} products successfully into PostgreSQL.`);
       }
-      await client.query('COMMIT');
-      console.log(`Synchronized ${productsList.length} products successfully into PostgreSQL.`);
-    }
 
-    // Seed new user-requested categories and products if not exists
-    const newItems = [
-      { category: 'Напитки', name: 'Вода', unit: 'шт' },
-      { category: 'Напитки', name: 'Газированные напитки', unit: 'шт' },
-      { category: 'Напитки', name: 'Соки и нектары', unit: 'шт' },
-      { category: 'Напитки', name: 'Морсы', unit: 'шт' },
-      { category: 'Напитки', name: 'Энергетические напитки', unit: 'шт' },
-      { category: 'Напитки', name: 'Чай и кофе', unit: 'шт' },
-      { category: 'Напитки', name: 'Сиропы и основы', unit: 'шт' },
+      const newItems = [
+        { category: 'Напитки', name: 'Вода', unit: 'шт' },
+        { category: 'Напитки', name: 'Газированные напитки', unit: 'шт' },
+        { category: 'Напитки', name: 'Соки и нектары', unit: 'шт' },
+        { category: 'Напитки', name: 'Морсы', unit: 'шт' },
+        { category: 'Напитки', name: 'Энергетические напитки', unit: 'шт' },
+        { category: 'Напитки', name: 'Чай и кофе', unit: 'шт' },
+        { category: 'Напитки', name: 'Сиропы и основы', unit: 'шт' },
 
-      { category: 'Сладости', name: 'Шоколад', unit: 'шт' },
-      { category: 'Сладости', name: 'Конфеты', unit: 'шт' },
-      { category: 'Сладости', name: 'Печенье', unit: 'шт' },
+        { category: 'Сладости', name: 'Шоколад', unit: 'шт' },
+        { category: 'Сладости', name: 'Конфеты', unit: 'шт' },
+        { category: 'Сладости', name: 'Печенье', unit: 'шт' },
 
-      { category: 'Сублимированные ягоды и фрукты', name: 'Сублимированные ягоды', unit: 'шт' },
-      { category: 'Сублимированные ягоды и фрукты', name: 'Сублимированные фрукты', unit: 'шт' },
+        { category: 'Сублимированные ягоды и фрукты', name: 'Сублимированные ягоды', unit: 'шт' },
+        { category: 'Сублимированные ягоды и фрукты', name: 'Сублимированные фрукты', unit: 'шт' },
 
-      { category: 'Готовая продукция', name: 'Выпечка', unit: 'шт' },
-      { category: 'Готовая продукция', name: 'Десерты', unit: 'шт' },
-      { category: 'Готовая продукция', name: 'Сладости', unit: 'шт' },
-      { category: 'Готовая продукция', name: 'Чизкейки', unit: 'шт' },
+        { category: 'Готовая продукция', name: 'Выпечка', unit: 'шт' },
+        { category: 'Готовая продукция', name: 'Десерты', unit: 'шт' },
+        { category: 'Готовая продукция', name: 'Сладости', unit: 'шт' },
+        { category: 'Готовая продукция', name: 'Чизкейки', unit: 'шт' },
 
-      { category: 'Упаковка и доставка', name: 'Пицца (коробки)', unit: 'шт' },
-      { category: 'Упаковка и доставка', name: 'Супы и горячие (контейнеры)', unit: 'шт' },
-      { category: 'Упаковка и доставка', name: 'Ланч-боксы (основные блюда)', unit: 'шт' },
-      { category: 'Упаковка и доставка', name: 'Салаты (контейнеры)', unit: 'шт' },
-      { category: 'Упаковка и доставка', name: 'Стаканы и напитки (стаканы, крышки, трубочки)', unit: 'шт' },
-      { category: 'Упаковка и доставка', name: 'Соусы (соусники)', unit: 'шт' },
-      { category: 'Упаковка и доставка', name: 'Одноразовая посуда (приборы, тарелки, салфетки)', unit: 'шт' },
-      { category: 'Упаковка и доставка', name: 'Пакеты и упаковка (крафт, доставка)', unit: 'шт' }
-    ];
+        { category: 'Упаковка и доставка', name: 'Пицца (коробки)', unit: 'шт' },
+        { category: 'Упаковка и доставка', name: 'Супы и горячие (контейнеры)', unit: 'шт' },
+        { category: 'Упаковка и доставка', name: 'Ланч-боксы (основные блюда)', unit: 'шт' },
+        { category: 'Упаковка и доставка', name: 'Салаты (контейнеры)', unit: 'шт' },
+        { category: 'Упаковка и доставка', name: 'Стаканы и напитки (стаканы, крышки, трубочки)', unit: 'шт' },
+        { category: 'Упаковка и доставка', name: 'Соусы (соусники)', unit: 'шт' },
+        { category: 'Упаковка и доставка', name: 'Одноразовая посуда (приборы, тарелки, салфетки)', unit: 'шт' },
+        { category: 'Упаковка и доставка', name: 'Пакеты и упаковка (крафт, доставка)', unit: 'шт' }
+      ];
 
-    let seededCount = 0;
-    for (const item of newItems) {
-      const check = await client.query('SELECT id FROM products WHERE name = $1 AND category = $2', [item.name, item.category]);
-      if (check.rows.length === 0) {
-        await client.query(
-          `INSERT INTO products (name, price, category, unit, manufacturer) VALUES ($1, 0.00, $2, $3, 'Не указан')`,
-          [item.name, item.category, item.unit]
-        );
-        seededCount++;
+      let seededCount = 0;
+      for (const item of newItems) {
+        const check = await client.query('SELECT id FROM products WHERE name = $1 AND category = $2', [item.name, item.category]);
+        if (check.rows.length === 0) {
+          await client.query(
+            `INSERT INTO products (name, price, category, unit, manufacturer) VALUES ($1, 0.00, $2, $3, 'Не указан')`,
+            [item.name, item.category, item.unit]
+          );
+          seededCount++;
+        }
       }
-    }
-    if (seededCount > 0) {
-      console.log(`Seeded ${seededCount} new custom products successfully into database.`);
+      if (seededCount > 0) {
+        console.log(`Seeded ${seededCount} new custom products successfully into database.`);
+      }
     }
 
     console.log('Neon Database full migration & seeding finished successfully.');
@@ -504,6 +508,61 @@ app.get('/api/orders', authenticateToken, async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: 'Ошибка сервера при загрузке истории заказов' });
+  }
+});
+
+app.put('/api/orders/:id', authenticateToken, async (req, res) => {
+  const { id } = req.params;
+  const { items, totalPrice, discount, originalPrice } = req.body;
+
+  if (!items || items.length === 0 || totalPrice === undefined || isNaN(totalPrice)) {
+    return res.status(400).json({ message: 'Некорректные данные накладной' });
+  }
+
+  try {
+    const orderCheck = await pool.query('SELECT user_id FROM orders WHERE id = $1', [parseInt(id, 10)]);
+    if (orderCheck.rows.length === 0) {
+      return res.status(404).json({ message: 'Накладная не найдена' });
+    }
+
+    if (orderCheck.rows[0].user_id !== req.user.id) {
+      return res.status(403).json({ message: 'Доступ запрещен' });
+    }
+
+    const userQuery = await pool.query('SELECT order_limit, discount FROM users WHERE id = $1', [req.user.id]);
+    if (userQuery.rows.length === 0) {
+      return res.status(404).json({ message: 'Ресторан не найден' });
+    }
+
+    const orderLimit = parseFloat(userQuery.rows[0].order_limit);
+    const userDiscount = parseFloat(userQuery.rows[0].discount || 0);
+
+    if (parseFloat(totalPrice) > orderLimit) {
+      return res.status(400).json({ 
+        message: `Сумма заказа (${totalPrice.toLocaleString()} ₸) превышает ваш установленный лимит (${orderLimit.toLocaleString()} ₸)` 
+      });
+    }
+
+    const finalDiscount = discount !== undefined ? discount : userDiscount;
+    const finalOriginalPrice = originalPrice !== undefined ? originalPrice : totalPrice;
+
+    const updateResult = await pool.query(
+      'UPDATE orders SET items = $1, total_price = $2, discount = $3, original_price = $4 WHERE id = $5 RETURNING *',
+      [JSON.stringify(items), totalPrice, finalDiscount, finalOriginalPrice, parseInt(id, 10)]
+    );
+
+    res.json({
+      message: 'Накладная успешно обновлена',
+      order: {
+        ...updateResult.rows[0],
+        total_price: parseFloat(updateResult.rows[0].total_price),
+        discount: parseFloat(updateResult.rows[0].discount || 0),
+        original_price: parseFloat(updateResult.rows[0].original_price || updateResult.rows[0].total_price)
+      }
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Ошибка сервера при обновлении накладной' });
   }
 });
 
