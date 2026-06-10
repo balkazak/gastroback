@@ -285,7 +285,8 @@ app.post('/api/auth/register', async (req, res) => {
       user: {
         ...newUser.rows[0],
         order_limit: parseFloat(newUser.rows[0].order_limit),
-        discount: parseFloat(newUser.rows[0].discount || 0)
+        discount: parseFloat(newUser.rows[0].discount || 0),
+        total_orders_sum: 0.00
       }
     });
   } catch (err) {
@@ -320,6 +321,9 @@ app.post('/api/auth/login', async (req, res) => {
       { expiresIn: '30d' }
     );
 
+    const sumResult = await pool.query('SELECT COALESCE(SUM(total_price), 0) as total_sum FROM orders WHERE user_id = $1', [user.id]);
+    const totalOrdersSum = parseFloat(sumResult.rows[0].total_sum);
+
     res.json({
       token,
       user: {
@@ -336,7 +340,8 @@ app.post('/api/auth/login', async (req, res) => {
         kbe: user.kbe,
         bic: user.bic,
         account_number: user.account_number,
-        created_at: user.created_at
+        created_at: user.created_at,
+        total_orders_sum: totalOrdersSum
       }
     });
   } catch (err) {
@@ -352,9 +357,12 @@ app.get('/api/auth/me', authenticateToken, async (req, res) => {
     if (result.rows.length === 0) {
       return res.status(404).json({ message: 'Пользователь не найден' });
     }
+    const sumResult = await pool.query('SELECT COALESCE(SUM(total_price), 0) as total_sum FROM orders WHERE user_id = $1', [req.user.id]);
+    const totalOrdersSum = parseFloat(sumResult.rows[0].total_sum);
     const user = result.rows[0];
     user.order_limit = parseFloat(user.order_limit);
     user.discount = parseFloat(user.discount || 0);
+    user.total_orders_sum = totalOrdersSum;
     res.json({ user });
   } catch (err) {
     console.error(err);
@@ -386,6 +394,9 @@ app.put('/api/auth/profile', authenticateToken, async (req, res) => {
 
     const result = await pool.query(query, params);
 
+    const sumResult = await pool.query('SELECT COALESCE(SUM(total_price), 0) as total_sum FROM orders WHERE user_id = $1', [req.user.id]);
+    const totalOrdersSum = parseFloat(sumResult.rows[0].total_sum);
+
     if (result.rows.length === 0) {
       return res.status(404).json({ message: 'Пользователь не найден' });
     }
@@ -393,6 +404,7 @@ app.put('/api/auth/profile', authenticateToken, async (req, res) => {
     const user = result.rows[0];
     user.order_limit = parseFloat(user.order_limit);
     user.discount = parseFloat(user.discount || 0);
+    user.total_orders_sum = totalOrdersSum;
 
     res.json({
       message: 'Профиль успешно обновлен',
@@ -442,9 +454,12 @@ app.post('/api/orders', authenticateToken, async (req, res) => {
     const userDiscount = parseFloat(userQuery.rows[0].discount || 0);
 
     // Verify limit constraint
-    if (parseFloat(totalPrice) > orderLimit) {
+    const sumResult = await pool.query('SELECT COALESCE(SUM(total_price), 0) as total_sum FROM orders WHERE user_id = $1', [req.user.id]);
+    const totalOrdersSum = parseFloat(sumResult.rows[0].total_sum);
+
+    if (totalOrdersSum + parseFloat(totalPrice) > orderLimit) {
       return res.status(400).json({ 
-        message: `Сумма заказа (${totalPrice.toLocaleString()} ₸) превышает ваш установленный лимит (${orderLimit.toLocaleString()} ₸)` 
+        message: `Сумма заказа (${totalPrice.toLocaleString()} ₸) с учетом предыдущих накладных (${totalOrdersSum.toLocaleString()} ₸) превышает ваш установленный лимит (${orderLimit.toLocaleString()} ₸)` 
       });
     }
 
@@ -537,9 +552,12 @@ app.put('/api/orders/:id', authenticateToken, async (req, res) => {
     const orderLimit = parseFloat(userQuery.rows[0].order_limit);
     const userDiscount = parseFloat(userQuery.rows[0].discount || 0);
 
-    if (parseFloat(totalPrice) > orderLimit) {
+    const sumResult = await pool.query('SELECT COALESCE(SUM(total_price), 0) as total_sum FROM orders WHERE user_id = $1 AND id != $2', [req.user.id, parseInt(id, 10)]);
+    const totalOrdersSum = parseFloat(sumResult.rows[0].total_sum);
+
+    if (totalOrdersSum + parseFloat(totalPrice) > orderLimit) {
       return res.status(400).json({ 
-        message: `Сумма заказа (${totalPrice.toLocaleString()} ₸) превышает ваш установленный лимит (${orderLimit.toLocaleString()} ₸)` 
+        message: `Сумма заказа (${totalPrice.toLocaleString()} ₸) с учетом других накладных (${totalOrdersSum.toLocaleString()} ₸) превышает ваш установленный лимит (${orderLimit.toLocaleString()} ₸)` 
       });
     }
 
@@ -572,7 +590,7 @@ app.put('/api/orders/:id', authenticateToken, async (req, res) => {
 app.get('/api/admin/users', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT id, name, email, order_limit, discount, shipped_amount, paid_amount, overdue_amount, created_at 
+      `SELECT id, name, email, order_limit, discount, shipped_amount, paid_amount, overdue_amount, created_at, phone, address, bin_iin, bank, kbe, bic, account_number 
        FROM users 
        WHERE role = 'restaurant' 
        ORDER BY created_at DESC`
@@ -1054,6 +1072,34 @@ app.put('/api/admin/orders/:id', authenticateToken, requireAdmin, async (req, re
     res.status(500).json({ message: 'Ошибка сервера при обновлении накладной' });
   }
 });
+
+app.delete('/api/admin/orders/:id', authenticateToken, requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const orderQuery = await client.query('SELECT user_id, total_price FROM orders WHERE id = $1', [parseInt(id, 10)]);
+    if (orderQuery.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ message: 'Накладная не найдена' });
+    }
+    const { user_id, total_price } = orderQuery.rows[0];
+    await client.query('DELETE FROM orders WHERE id = $1', [parseInt(id, 10)]);
+    await client.query(
+      'UPDATE users SET shipped_amount = GREATEST(0, shipped_amount - $1) WHERE id = $2',
+      [parseFloat(total_price), user_id]
+    );
+    await client.query('COMMIT');
+    res.json({ message: 'Накладная успешно удалена' });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error(err);
+    res.status(500).json({ message: 'Ошибка сервера при удалении накладной' });
+  } finally {
+    client.release();
+  }
+});
+
 
 // Start Server
 app.listen(PORT, () => {
