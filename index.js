@@ -147,6 +147,9 @@ const initDatabase = async () => {
     await client.query(`
       ALTER TABLE orders ADD COLUMN IF NOT EXISTS original_price NUMERIC(12, 2);
     `);
+    await client.query(`
+      ALTER TABLE orders ADD COLUMN IF NOT EXISTS waybill_number VARCHAR(100);
+    `);
 
     // 3.1 Create payments table
     await client.query(`
@@ -494,7 +497,7 @@ app.get('/api/orders', authenticateToken, async (req, res) => {
     let result;
     if (role === 'admin') {
       result = await pool.query(`
-        SELECT o.id, o.total_price, o.items, o.discount, o.original_price, o.created_at, 
+        SELECT o.id, o.total_price, o.items, o.discount, o.original_price, o.created_at, o.waybill_number,
                u.name as restaurant_name, u.email as restaurant_email,
                u.phone as restaurant_phone, u.address as restaurant_address,
                u.bin_iin as restaurant_bin_iin, u.bank as restaurant_bank,
@@ -507,7 +510,7 @@ app.get('/api/orders', authenticateToken, async (req, res) => {
     } else {
       // Restaurant sees only their own orders
       result = await pool.query(
-        'SELECT id, total_price, items, discount, original_price, created_at FROM orders WHERE user_id = $1 ORDER BY created_at DESC',
+        'SELECT id, total_price, items, discount, original_price, created_at, waybill_number FROM orders WHERE user_id = $1 ORDER BY created_at DESC',
         [req.user.id]
       );
     }
@@ -1030,7 +1033,7 @@ app.post('/api/admin/products', authenticateToken, requireAdmin, async (req, res
 
 app.put('/api/admin/orders/:id', authenticateToken, requireAdmin, async (req, res) => {
   const { id } = req.params;
-  const { items, totalPrice, discount, originalPrice } = req.body;
+  const { items, totalPrice, discount, originalPrice, waybillNumber } = req.body;
 
   if (!items || items.length === 0 || totalPrice === undefined || isNaN(totalPrice)) {
     return res.status(400).json({ message: 'Некорректные данные накладной' });
@@ -1038,8 +1041,8 @@ app.put('/api/admin/orders/:id', authenticateToken, requireAdmin, async (req, re
 
   try {
     const updateResult = await pool.query(
-      'UPDATE orders SET items = $1, total_price = $2, discount = $3, original_price = $4 WHERE id = $5 RETURNING id',
-      [JSON.stringify(items), totalPrice, discount || 0, originalPrice || totalPrice, parseInt(id, 10)]
+      'UPDATE orders SET items = $1, total_price = $2, discount = $3, original_price = $4, waybill_number = $5 WHERE id = $6 RETURNING id',
+      [JSON.stringify(items), totalPrice, discount || 0, originalPrice || totalPrice, waybillNumber || null, parseInt(id, 10)]
     );
 
     if (updateResult.rows.length === 0) {
@@ -1047,7 +1050,7 @@ app.put('/api/admin/orders/:id', authenticateToken, requireAdmin, async (req, re
     }
 
     const result = await pool.query(`
-      SELECT o.id, o.total_price, o.items, o.discount, o.original_price, o.created_at, 
+      SELECT o.id, o.total_price, o.items, o.discount, o.original_price, o.created_at, o.waybill_number,
              u.name as restaurant_name, u.email as restaurant_email,
              u.phone as restaurant_phone, u.address as restaurant_address,
              u.bin_iin as restaurant_bin_iin, u.bank as restaurant_bank,
