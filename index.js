@@ -1065,35 +1065,6 @@ app.delete('/api/admin/products/:id', authenticateToken, requireAdmin, async (re
   }
 });
 
-app.post('/api/admin/products/:id/auto-image', authenticateToken, requireAdmin, async (req, res) => {
-  const { id } = req.params;
-  try {
-    const productCheck = await pool.query('SELECT name, category FROM products WHERE id = $1', [parseInt(id, 10)]);
-    if (productCheck.rows.length === 0) {
-      return res.status(404).json({ message: 'Товар не найден' });
-    }
-    const product = productCheck.rows[0];
-    let matchedUrl = null;
-    const lowerName = product.name.toLowerCase();
-    for (const item of nameKeywordImages) {
-      if (item.keywords.some(kw => lowerName.includes(kw))) {
-        matchedUrl = item.url;
-        break;
-      }
-    }
-    if (!matchedUrl) {
-      matchedUrl = categoryImages[product.category];
-    }
-    if (!matchedUrl) {
-      matchedUrl = 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=500&auto=format&fit=crop&q=80';
-    }
-    await pool.query('UPDATE products SET image_url = $1 WHERE id = $2', [matchedUrl, parseInt(id, 10)]);
-    res.json({ imageUrl: matchedUrl });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: 'Ошибка сервера при автоматическом поиске изображения' });
-  }
-});
 
 app.post('/api/admin/products', authenticateToken, requireAdmin, async (req, res) => {
   const { name, price, category, unit, manufacturer, is_in_stock, image_url, description } = req.body;
