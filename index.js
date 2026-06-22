@@ -59,68 +59,7 @@ const requireAdmin = async (req, res, next) => {
   }
 };
 
-const categoryImages = {
-  'Бакалея': 'https://images.unsplash.com/photo-1542838132-92c53300491e?w=500&auto=format&fit=crop&q=80',
-  'Фрукты': 'https://images.unsplash.com/photo-1619546813926-a78fa6372cd2?w=500&auto=format&fit=crop&q=80',
-  'Овощи': 'https://images.unsplash.com/photo-1566385101042-1a010c129fa6?w=500&auto=format&fit=crop&q=80',
-  'Зелень': 'https://images.unsplash.com/photo-1534422298391-e4f8c172dddb?w=500&auto=format&fit=crop&q=80',
-  'Ягоды': 'https://images.unsplash.com/photo-1513530534585-c7b1394c6d51?w=500&auto=format&fit=crop&q=80',
-  'Салаты': 'https://images.unsplash.com/photo-1540420773420-3366772f4999?w=500&auto=format&fit=crop&q=80',
-  'Масла и жиры': 'https://images.unsplash.com/photo-1474979266404-7eaacbcd87c5?w=500&auto=format&fit=crop&q=80',
-  'Молочные продукты': 'https://images.unsplash.com/photo-1550583724-b2692b85b150?w=500&auto=format&fit=crop&q=80',
-  'Сыры и сырные продукты': 'https://images.unsplash.com/photo-1486887396153-fa416525c108?w=500&auto=format&fit=crop&q=80',
-  'Колбасные изделия и х/к': 'https://images.unsplash.com/photo-1624462966581-bc6d768cbce5?w=500&auto=format&fit=crop&q=80',
-  'Морепродукты': 'https://images.unsplash.com/photo-1534080391025-a87b99835782?w=500&auto=format&fit=crop&q=80',
-  'Мука и мучные изделия': 'https://images.unsplash.com/photo-1509440159596-0249088772ff?w=500&auto=format&fit=crop&q=80',
-  'Мясо птицы': 'https://images.unsplash.com/photo-1604503468506-a8da13d82791?w=500&auto=format&fit=crop&q=80',
-  'Полуфабрикаты и картофельные изделия': 'https://images.unsplash.com/photo-1573080496219-bb080dd4f877?w=500&auto=format&fit=crop&q=80',
-  'Суши бар': 'https://images.unsplash.com/photo-1579871494447-9811cf80d66c?w=500&auto=format&fit=crop&q=80',
-  'Соусы и уксусы': 'https://images.unsplash.com/photo-1470337458703-46ad1756a187?w=500&auto=format&fit=crop&q=80',
-  'Консервация': 'https://images.unsplash.com/photo-1536638317175-32449e082d60?w=500&auto=format&fit=crop&q=80',
-  'Крупы': 'https://images.unsplash.com/photo-1574316071802-0d684efa7bf5?w=500&auto=format&fit=crop&q=80',
-  'Кондитерские': 'https://images.unsplash.com/photo-1578985545062-69928b1d9587?w=500&auto=format&fit=crop&q=80',
-  'Орехи': 'https://images.unsplash.com/photo-1599599810769-bcde5a160d32?w=500&auto=format&fit=crop&q=80',
-  'Приправы и специи': 'https://images.unsplash.com/photo-1596040033229-a9821ebd058d?w=500&auto=format&fit=crop&q=80',
-  'Сиропы': 'https://images.unsplash.com/photo-1589733901241-5e56479f4747?w=500&auto=format&fit=crop&q=80',
-  'Чай-кофе': 'https://images.unsplash.com/photo-1544787219-7f47ccb76574?w=500&auto=format&fit=crop&q=80',
-  'Ягоды и овощи с/м': 'https://images.unsplash.com/photo-1513530534585-c7b1394c6d51?w=500&auto=format&fit=crop&q=80',
-  'Хоз.товары': 'https://images.unsplash.com/photo-1583947215259-38e31be8751f?w=500&auto=format&fit=crop&q=80'
-};
 
-const nameKeywordImages = [
-  { keywords: ['помидор', 'томат', 'кетчуп'], url: 'https://images.unsplash.com/photo-1595855759920-86582396756a?w=500&auto=format&fit=crop&q=80' },
-  { keywords: ['моцарелла', 'сулугуни', 'сыр'], url: 'https://images.unsplash.com/photo-1559561853-08451507cbe7?w=500&auto=format&fit=crop&q=80' },
-  { keywords: ['лосось', 'семга', 'форель', 'рыба'], url: 'https://images.unsplash.com/photo-1519708227418-c8fd9a32b7a2?w=500&auto=format&fit=crop&q=80' },
-  { keywords: ['хлеб', 'батон', 'булочк'], url: 'https://images.unsplash.com/photo-1509440159596-0249088772ff?w=500&auto=format&fit=crop&q=80' },
-  { keywords: ['креветки', 'морепрод'], url: 'https://images.unsplash.com/photo-1565557623262-b51c2513a641?w=500&auto=format&fit=crop&q=80' },
-  { keywords: ['лимон', 'лайм', 'цитрус'], url: 'https://images.unsplash.com/photo-1590502593747-42a996133562?w=500&auto=format&fit=crop&q=80' },
-  { keywords: ['картоф'], url: 'https://images.unsplash.com/photo-1518977676601-b53f82aba655?w=500&auto=format&fit=crop&q=80' },
-  { keywords: ['куриц', 'цыплен', 'окорок', 'крылышк'], url: 'https://images.unsplash.com/photo-1604503468506-a8da13d82791?w=500&auto=format&fit=crop&q=80' },
-  { keywords: ['чай'], url: 'https://images.unsplash.com/photo-1576092768241-dec231879fc3?w=500&auto=format&fit=crop&q=80' },
-  { keywords: ['кофе', 'капучино', 'эспрессо'], url: 'https://images.unsplash.com/photo-1509042239860-f550ce710b93?w=500&auto=format&fit=crop&q=80' },
-  { keywords: ['кола', 'cola', 'пепси', 'sprite', 'напит'], url: 'https://images.unsplash.com/photo-1622483767028-3f66f32aef97?w=500&auto=format&fit=crop&q=80' },
-  { keywords: ['вода'], url: 'https://images.unsplash.com/photo-1548839140-29a749e1cf4d?w=500&auto=format&fit=crop&q=80' },
-  { keywords: ['лапша', 'рамен', 'фунчоза', 'спагетти', 'паста'], url: 'https://images.unsplash.com/photo-1569718212165-3a8278d5f624?w=500&auto=format&fit=crop&q=80' },
-  { keywords: ['кисель'], url: 'https://images.unsplash.com/photo-1536256263959-770b48d82b0a?w=500&auto=format&fit=crop&q=80' },
-  { keywords: ['капуста', 'брокколи'], url: 'https://images.unsplash.com/photo-1581009137042-c552e485697a?w=500&auto=format&fit=crop&q=80' },
-  { keywords: ['масло', 'оливков'], url: 'https://images.unsplash.com/photo-1474979266404-7eaacbcd87c5?w=500&auto=format&fit=crop&q=80' },
-  { keywords: ['творог', 'сметана', 'йогурт'], url: 'https://images.unsplash.com/photo-1488477181946-6428a0291777?w=500&auto=format&fit=crop&q=80' },
-  { keywords: ['мука'], url: 'https://images.unsplash.com/photo-1509440159596-0249088772ff?w=500&auto=format&fit=crop&q=80' },
-  { keywords: ['выпечка', 'десерт', 'чизкейк', 'торт', 'пирог'], url: 'https://images.unsplash.com/photo-1578985545062-69928b1d9587?w=500&auto=format&fit=crop&q=80' },
-  { keywords: ['шоколад'], url: 'https://images.unsplash.com/photo-1511381939415-e44015466834?w=500&auto=format&fit=crop&q=80' },
-  { keywords: ['конфеты', 'леденец'], url: 'https://images.unsplash.com/photo-1581798459219-318e76aecc7b?w=500&auto=format&fit=crop&q=80' },
-  { keywords: ['печенье'], url: 'https://images.unsplash.com/photo-1499636136210-6f4ee915583e?w=500&auto=format&fit=crop&q=80' },
-  { keywords: ['ягод', 'клубника', 'малина', 'черника', 'вишня'], url: 'https://images.unsplash.com/photo-1513530534585-c7b1394c6d51?w=500&auto=format&fit=crop&q=80' },
-  { keywords: ['фрукт', 'банан', 'яблок', 'апельсин'], url: 'https://images.unsplash.com/photo-1619546813926-a78fa6372cd2?w=500&auto=format&fit=crop&q=80' },
-  { keywords: ['огур'], url: 'https://images.unsplash.com/photo-1604977042946-1eecc30f269e?w=500&auto=format&fit=crop&q=80' },
-  { keywords: ['гриб', 'шампиньон'], url: 'https://images.unsplash.com/photo-1571244856003-9d5df1b99a65?w=500&auto=format&fit=crop&q=80' },
-  { keywords: ['укроп', 'петрушк', 'салат', 'базилик', 'зелень'], url: 'https://images.unsplash.com/photo-1534422298391-e4f8c172dddb?w=500&auto=format&fit=crop&q=80' },
-  { keywords: ['соус', 'майонез'], url: 'https://images.unsplash.com/photo-1470337458703-46ad1756a187?w=500&auto=format&fit=crop&q=80' },
-  { keywords: ['рис'], url: 'https://images.unsplash.com/photo-1586201375761-83865001e31c?w=500&auto=format&fit=crop&q=80' },
-  { keywords: ['суши', 'ролл'], url: 'https://images.unsplash.com/photo-1579871494447-9811cf80d66c?w=500&auto=format&fit=crop&q=80' },
-  { keywords: ['пицца'], url: 'https://images.unsplash.com/photo-1513104890138-7c749659a591?w=500&auto=format&fit=crop&q=80' },
-  { keywords: ['упаковка', 'коробк', 'стакан', 'пакет'], url: 'https://images.unsplash.com/photo-1583947215259-38e31be8751f?w=500&auto=format&fit=crop&q=80' }
-];
 
 const initDatabase = async () => {
   const client = await pool.connect();
@@ -307,42 +246,7 @@ const initDatabase = async () => {
       }
     }
 
-    const result = await client.query('SELECT id, name, category, image_url FROM products WHERE image_url IS NULL');
-    if (result.rows.length > 0) {
-      const updates = [];
-      const values = [];
-      let index = 1;
-      for (const row of result.rows) {
-        let matchedUrl = null;
-        const lowerName = row.name.toLowerCase();
-        for (const item of nameKeywordImages) {
-          if (item.keywords.some(kw => lowerName.includes(kw))) {
-            matchedUrl = item.url;
-            break;
-          }
-        }
-        if (!matchedUrl) {
-          matchedUrl = categoryImages[row.category];
-        }
-        if (matchedUrl) {
-          updates.push(`($${index}, $${index + 1})`);
-          values.push(row.id, matchedUrl);
-          index += 2;
-        }
-      }
-      if (updates.length > 0) {
-        await client.query('BEGIN');
-        const queryText = `
-          UPDATE products AS p SET
-            image_url = v.image_url
-          FROM (VALUES ${updates.join(', ')}) AS v(id, image_url)
-          WHERE p.id = CAST(v.id AS INTEGER)
-        `;
-        await client.query(queryText, values);
-        await client.query('COMMIT');
-        console.log(`Successfully seeded ${updates.length} product images in bulk.`);
-      }
-    }
+
 
     console.log('Neon Database full migration & seeding finished successfully.');
   } catch (err) {
