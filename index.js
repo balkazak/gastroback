@@ -6,6 +6,8 @@ import jwt from 'jsonwebtoken';
 import dotenv from 'dotenv';
 import fs from 'fs';
 import path from 'path';
+import multer from 'multer';
+import { sendFormEmail } from './services/emailService.js';
 
 dotenv.config();
 
@@ -16,6 +18,30 @@ const PORT = process.env.PORT || 5000;
 app.use(cors());
 app.use(express.json());
 app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
+
+// Multer configuration for form file attachments
+const attachmentsDir = path.join(process.cwd(), 'uploads', 'attachments');
+if (!fs.existsSync(attachmentsDir)) {
+  fs.mkdirSync(attachmentsDir, { recursive: true });
+}
+
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, attachmentsDir);
+  },
+  filename: (req, file, cb) => {
+    const safeName = Buffer.from(file.originalname, 'latin1').toString('utf8').replace(/[^a-zA-Z0-9._\u0400-\u04FF-]/g, '_');
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, `${uniqueSuffix}-${safeName}`);
+  }
+});
+
+const uploadAttachment = multer({
+  storage,
+  limits: {
+    fileSize: 30 * 1024 * 1024 // 30 MB
+  }
+});
 
 
 // PostgreSQL Pool Connection
@@ -163,6 +189,24 @@ const initDatabase = async () => {
         id SERIAL PRIMARY KEY,
         user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
         amount NUMERIC(12, 2) NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS form_submissions (
+        id SERIAL PRIMARY KEY,
+        form_type VARCHAR(50) NOT NULL,
+        subject VARCHAR(255),
+        restaurant VARCHAR(255),
+        name VARCHAR(255),
+        phone VARCHAR(100),
+        email VARCHAR(255),
+        message TEXT,
+        file_url VARCHAR(500),
+        file_name VARCHAR(255),
+        file_size INTEGER,
+        details JSONB,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
@@ -1178,7 +1222,167 @@ app.delete('/api/admin/orders/:id', authenticateToken, requireAdmin, async (req,
 });
 
 
+// --- Form Submissions & Email Service APIs ---
+
+// 1. Submit form (Supports multipart with file attachments or JSON)
+app.post('/api/forms/submit', (req, res, next) => {
+  const contentType = req.headers['content-type'] || '';
+  if (contentType.includes('multipart/form-data')) {
+    uploadAttachment.single('attachment')(req, res, (err) => {
+      if (err instanceof multer.MulterError) {
+        if (err.code === 'LIMIT_FILE_SIZE') {
+          return res.status(400).json({ success: false, message: 'Размер файла превышает лимит (30 МБ)' });
+        }
+        return res.status(400).json({ success: false, message: `Ошибка загрузки файла: ${err.message}` });
+      } else if (err) {
+        return res.status(400).json({ success: false, message: err.message });
+      }
+      next();
+    });
+  } else {
+    next();
+  }
+}, async (req, res) => {
+  try {
+    const {
+      form_type = 'custom',
+      subject,
+      restaurant,
+      name,
+      phone,
+      email,
+      message
+    } = req.body;
+
+    let details = req.body.details;
+    if (typeof details === 'string') {
+      try {
+        details = JSON.parse(details);
+      } catch (e) {
+        details = { raw: details };
+      }
+    }
+    if (!details || typeof details !== 'object') {
+      details = {};
+    }
+
+    // Capture any extra fields sent in req.body that are not standard columns
+    const standardKeys = new Set(['form_type', 'subject', 'restaurant', 'name', 'phone', 'email', 'message', 'details', 'access_key', 'from_name']);
+    for (const [k, v] of Object.entries(req.body)) {
+      if (!standardKeys.has(k) && v !== undefined && v !== null && v !== '') {
+        details[k] = v;
+      }
+    }
+
+    let fileUrl = null;
+    let fileName = null;
+    let fileSize = null;
+
+    if (req.file) {
+      fileUrl = `/uploads/attachments/${req.file.filename}`;
+      fileName = Buffer.from(req.file.originalname, 'latin1').toString('utf8');
+      fileSize = req.file.size;
+    }
+
+    // 1. Save submission into Neon PostgreSQL
+    const insertResult = await pool.query(
+      `INSERT INTO form_submissions (form_type, subject, restaurant, name, phone, email, message, file_url, file_name, file_size, details)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+       RETURNING *`,
+      [
+        form_type,
+        subject || 'Заявка с сайта',
+        restaurant || null,
+        name || null,
+        phone || null,
+        email || null,
+        message || null,
+        fileUrl,
+        fileName,
+        fileSize,
+        JSON.stringify(details)
+      ]
+    );
+
+    const submission = insertResult.rows[0];
+
+    // 2. Dispatch email to gastromir.kz@gmail.com
+    const emailResult = await sendFormEmail({
+      formType: form_type,
+      subject: subject || `Заявка с сайта: ${restaurant || name || 'GASTROMIR'}`,
+      restaurant,
+      name,
+      phone,
+      email,
+      message,
+      details,
+      file: req.file ? {
+        filename: req.file.filename,
+        originalname: fileName,
+        path: req.file.path,
+        size: req.file.size
+      } : null
+    });
+
+    res.status(201).json({
+      success: true,
+      message: 'Заявка успешно принята!',
+      id: submission.id,
+      file_url: fileUrl,
+      email_sent: !!emailResult.success
+    });
+  } catch (err) {
+    console.error('Error handling form submission:', err);
+    res.status(500).json({ success: false, message: 'Ошибка сервера при обработке заявки' });
+  }
+});
+
+// 2. Get all submissions (Admin only)
+app.get('/api/admin/submissions', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT * FROM form_submissions ORDER BY created_at DESC LIMIT 200`
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Error fetching submissions:', err);
+    res.status(500).json({ message: 'Ошибка при получении списка заявок' });
+  }
+});
+
+// 3. Delete submission (Admin only)
+app.delete('/api/admin/submissions/:id', authenticateToken, requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  try {
+    const check = await pool.query('SELECT file_url FROM form_submissions WHERE id = $1', [parseInt(id, 10)]);
+    if (check.rows.length === 0) {
+      return res.status(404).json({ message: 'Заявка не найдена' });
+    }
+
+    const fileUrl = check.rows[0].file_url;
+    if (fileUrl && fileUrl.startsWith('/uploads/attachments/')) {
+      const fileName = fileUrl.replace('/uploads/attachments/', '');
+      const filePath = path.join(attachmentsDir, fileName);
+      if (fs.existsSync(filePath)) {
+        try {
+          fs.unlinkSync(filePath);
+        } catch (e) {
+          console.error('Error deleting attachment file:', e);
+        }
+      }
+    }
+
+    await pool.query('DELETE FROM form_submissions WHERE id = $1', [parseInt(id, 10)]);
+    res.json({ message: 'Заявка успешно удалена' });
+  } catch (err) {
+    console.error('Error deleting submission:', err);
+    res.status(500).json({ message: 'Ошибка сервера при удалении заявки' });
+  }
+});
+
+
 // Start Server
 app.listen(PORT, () => {
   console.log(`Backend server is running on port ${PORT}`);
 });
+
