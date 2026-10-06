@@ -1,5 +1,6 @@
 import nodemailer from 'nodemailer';
 import net from 'net';
+import fs from 'fs';
 
 /**
  * Creates a reusable nodemailer transporter based on environment variables.
@@ -223,7 +224,36 @@ export async function sendResendEmail(submission) {
   const subject = submission.subject || `[GASTROMIR] Новая заявка: ${submission.restaurant || submission.name || 'Сайт'}`;
   const { html, text } = buildEmailContent(submission);
 
+  const attachments = [];
+  if (submission.file && submission.file.path && fs.existsSync(submission.file.path)) {
+    try {
+      const fileBuffer = fs.readFileSync(submission.file.path);
+      attachments.push({
+        filename: submission.file.originalname || submission.file.filename,
+        content: fileBuffer.toString('base64')
+      });
+      console.log(`[Resend 📎] Attached file: ${submission.file.originalname || submission.file.filename} (${Math.round(fileBuffer.length / 1024)} KB)`);
+    } catch (e) {
+      console.warn('[Resend Attachment Read Error]:', e.message);
+    }
+  }
+
+  const payload = {
+    from,
+    to: [to],
+    subject,
+    html,
+    text
+  };
+
+  if (attachments.length > 0) {
+    payload.attachments = attachments;
+  }
+
   console.log(`[Resend 🚀] Sending email via Resend HTTPS API to ${to}...`);
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 12000);
 
   try {
     const res = await fetch('https://api.resend.com/emails', {
@@ -232,14 +262,10 @@ export async function sendResendEmail(submission) {
         'Authorization': `Bearer ${apiKey}`,
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({
-        from,
-        to: [to],
-        subject,
-        html,
-        text
-      })
+      body: JSON.stringify(payload),
+      signal: controller.signal
     });
+    clearTimeout(timeoutId);
     const data = await res.json();
     if (res.ok) {
       console.log(`[Resend ✅ SUCCESS] Email delivered! Resend ID: ${data.id}`);
@@ -249,6 +275,7 @@ export async function sendResendEmail(submission) {
       return { success: false, error: data.message || JSON.stringify(data) };
     }
   } catch (err) {
+    clearTimeout(timeoutId);
     console.error(`[Resend ❌] Network error: ${err.message}`);
     return { success: false, error: err.message };
   }
