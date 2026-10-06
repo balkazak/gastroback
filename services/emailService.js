@@ -1,11 +1,12 @@
 import nodemailer from 'nodemailer';
+import net from 'net';
 
 /**
  * Creates a reusable nodemailer transporter based on environment variables.
  */
 export function getEmailTransporter(overridePort = null, overrideSecure = null) {
   const host = process.env.SMTP_HOST || 'mail.gastromir.kz';
-  const port = overridePort !== null ? overridePort : parseInt(process.env.SMTP_PORT || '465', 10);
+  const port = overridePort !== null ? overridePort : parseInt(process.env.SMTP_PORT || '587', 10);
   const secure = overrideSecure !== null 
     ? overrideSecure 
     : (process.env.SMTP_SECURE !== undefined ? process.env.SMTP_SECURE === 'true' : port === 465);
@@ -13,9 +14,11 @@ export function getEmailTransporter(overridePort = null, overrideSecure = null) 
   const pass = process.env.SMTP_PASS || '';
 
   if (!pass) {
-    console.warn('[EmailService] SMTP_PASS is not configured in .env. Email delivery will be skipped, but submission is stored in database.');
+    console.warn('[EmailService ⚠️] SMTP_PASS is empty or not configured in process.env! Email sending is SKIPPED.');
     return null;
   }
+
+  console.log(`[EmailService 🔌] Initializing SMTP transporter: host=${host}, port=${port}, secure=${secure}, user=${user}`);
 
   return nodemailer.createTransport({
     host,
@@ -163,12 +166,19 @@ export async function sendFormEmail(submission) {
   const from = process.env.MAIL_FROM || `"GASTROMIR" <${process.env.SMTP_USER || 'admin@gastromir.kz'}>`;
   const subject = submission.subject || `[GASTROMIR] Новая заявка: ${submission.restaurant || submission.name || 'Сайт'}`;
 
+  console.log(`\n================== [EmailService: SEND INITIATED] ==================`);
+  console.log(`[EmailService] To: ${to}`);
+  console.log(`[EmailService] From: ${from}`);
+  console.log(`[EmailService] Subject: "${subject}"`);
+  console.log(`[EmailService] Has file: ${Boolean(submission.file)}`);
+
   const transporter = getEmailTransporter();
   if (!transporter) {
+    console.error('[EmailService ❌] Transporter could NOT be created. Check if SMTP_PASS is defined in Railway Variables.');
     return {
       success: false,
       skipped: true,
-      reason: 'SMTP is not configured in .env. Form saved in database.'
+      reason: 'SMTP is not configured in process.env. Form saved in database.'
     };
   }
 
@@ -190,33 +200,143 @@ export async function sendFormEmail(submission) {
     });
   }
 
-  const sendWithTimeout = async (tp) => {
+  const sendWithTimeout = async (tp, label = 'SMTP') => {
     return Promise.race([
       tp.sendMail(mailOptions),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('SMTP timeout (7s)')), 7000))
+      new Promise((_, reject) => setTimeout(() => reject(new Error(`${label} connection timeout (7s exceeded)`)), 7000))
     ]);
   };
 
   try {
-    const info = await sendWithTimeout(transporter);
-    console.log(`[EmailService] Email sent successfully to ${to}. MessageId: ${info.messageId}`);
+    console.log('[EmailService 🚀] Attempting send via default transporter...');
+    const info = await sendWithTimeout(transporter, 'Primary SMTP');
+    console.log(`[EmailService ✅ SUCCESS] Email delivered! MessageId: ${info.messageId}`);
     return { success: true, messageId: info.messageId };
   } catch (err) {
-    console.warn('[EmailService] Primary SMTP attempt failed:', err.message);
+    console.error(`[EmailService ⚠️] Primary send failed! Code: ${err.code || 'UNKNOWN'}, Message: ${err.message}`);
 
-    // If initial attempt failed (e.g. port 465 blocked on cloud container), try port 587 (STARTTLS)
+    // If initial attempt failed, retry via port 587 explicitly
     try {
+      console.log('[EmailService 🔄] Retrying send via explicit port 587 (STARTTLS)...');
       const fallbackTransporter = getEmailTransporter(587, false);
       if (fallbackTransporter) {
-        console.log('[EmailService] Retrying via port 587 (STARTTLS)...');
-        const info = await sendWithTimeout(fallbackTransporter);
-        console.log(`[EmailService] Email sent successfully via fallback port 587. MessageId: ${info.messageId}`);
+        const info = await sendWithTimeout(fallbackTransporter, 'Fallback Port 587');
+        console.log(`[EmailService ✅ SUCCESS] Email delivered via port 587! MessageId: ${info.messageId}`);
         return { success: true, messageId: info.messageId };
       }
     } catch (fallbackErr) {
-      console.error('[EmailService] Fallback port 587 also failed:', fallbackErr.message);
+      console.error(`[EmailService ❌] Port 587 fallback also failed! Code: ${fallbackErr.code || 'UNKNOWN'}, Message: ${fallbackErr.message}`);
     }
 
-    return { success: false, error: err.message };
+    return { success: false, error: err.message, code: err.code };
   }
+}
+
+/**
+ * Diagnostic tool to check socket connectivity and SMTP credentials directly from Railway container.
+ */
+function testTcpPort(host, port, timeoutMs = 4000) {
+  return new Promise((resolve) => {
+    const start = Date.now();
+    const socket = net.createConnection({ host, port, timeout: timeoutMs });
+    
+    socket.on('connect', () => {
+      const duration = Date.now() - start;
+      socket.destroy();
+      resolve({ port, open: true, durationMs: duration, error: null });
+    });
+
+    socket.on('timeout', () => {
+      const duration = Date.now() - start;
+      socket.destroy();
+      resolve({ port, open: false, durationMs: duration, error: 'TIMEOUT (port unreachable / blocked by cloud firewall)' });
+    });
+
+    socket.on('error', (err) => {
+      const duration = Date.now() - start;
+      resolve({ port, open: false, durationMs: duration, error: `${err.code || ''}: ${err.message}` });
+    });
+  });
+}
+
+export async function debugCheckSmtp() {
+  const host = process.env.SMTP_HOST || 'mail.gastromir.kz';
+  const port = parseInt(process.env.SMTP_PORT || '587', 10);
+  const user = process.env.SMTP_USER || 'admin@gastromir.kz';
+  const pass = process.env.SMTP_PASS || '';
+  const to = process.env.MAIL_TO || 'gastromir.kz@gmail.com';
+  const from = process.env.MAIL_FROM || 'admin@gastromir.kz';
+
+  console.log('\n================== [SMTP DEBUG DIAGNOSTIC START] ==================');
+  console.log('[SMTP DIAGNOSTIC] Host:', host);
+  console.log('[SMTP DIAGNOSTIC] Port:', port);
+  console.log('[SMTP DIAGNOSTIC] User:', user);
+  console.log('[SMTP DIAGNOSTIC] Password present:', Boolean(pass), 'Length:', pass.length);
+  console.log('[SMTP DIAGNOSTIC] Mail To:', to);
+
+  // 1. Check raw TCP socket connection from this container
+  const test587 = await testTcpPort(host, 587, 4000);
+  const test465 = await testTcpPort(host, 465, 4000);
+  const test25 = await testTcpPort(host, 25, 4000);
+
+  console.log('[SMTP DIAGNOSTIC] Port 587 status:', test587);
+  console.log('[SMTP DIAGNOSTIC] Port 465 status:', test465);
+  console.log('[SMTP DIAGNOSTIC] Port 25 status:', test25);
+
+  // 2. Transporter verification
+  let verify587 = null;
+  if (test587.open) {
+    try {
+      const tp = getEmailTransporter(587, false);
+      if (tp) {
+        verify587 = await Promise.race([
+          tp.verify(),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Verify timeout (5s)')), 5000))
+        ]);
+        console.log('[SMTP DIAGNOSTIC] Verify port 587:', verify587);
+      }
+    } catch (e) {
+      verify587 = { error: e.message, code: e.code };
+      console.error('[SMTP DIAGNOSTIC] Verify port 587 failed:', e.message);
+    }
+  }
+
+  let verify465 = null;
+  if (test465.open) {
+    try {
+      const tp = getEmailTransporter(465, true);
+      if (tp) {
+        verify465 = await Promise.race([
+          tp.verify(),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Verify timeout (5s)')), 5000))
+        ]);
+        console.log('[SMTP DIAGNOSTIC] Verify port 465:', verify465);
+      }
+    } catch (e) {
+      verify465 = { error: e.message, code: e.code };
+      console.error('[SMTP DIAGNOSTIC] Verify port 465 failed:', e.message);
+    }
+  }
+
+  return {
+    timestamp: new Date().toISOString(),
+    config: {
+      host,
+      configuredPort: port,
+      user,
+      passwordPresent: Boolean(pass),
+      passwordLength: pass.length,
+      to,
+      from
+    },
+    socketConnectivity: {
+      port587: test587,
+      port465: test465,
+      port25: test25
+    },
+    transporterVerify: {
+      port587: verify587,
+      port465: verify465
+    }
+  };
 }

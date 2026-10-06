@@ -7,7 +7,7 @@ import dotenv from 'dotenv';
 import fs from 'fs';
 import path from 'path';
 import multer from 'multer';
-import { sendFormEmail } from './services/emailService.js';
+import { sendFormEmail, debugCheckSmtp } from './services/emailService.js';
 
 dotenv.config();
 
@@ -1336,6 +1336,37 @@ app.post('/api/forms/submit', (req, res, next) => {
   } catch (err) {
     console.error('Error handling form submission:', err);
     res.status(500).json({ success: false, message: 'Ошибка сервера при обработке заявки' });
+  }
+});
+
+// Diagnostic & Debug SMTP endpoint (Check ports and config from Railway container)
+app.get('/api/forms/debug-smtp', async (req, res) => {
+  try {
+    const diagnostic = await debugCheckSmtp();
+    res.json(diagnostic);
+  } catch (err) {
+    console.error('[debug-smtp endpoint error]:', err);
+    res.status(500).json({ error: err.message, stack: err.stack });
+  }
+});
+
+// Test email trigger endpoint (Triggers an email send and returns full log)
+app.get('/api/forms/test-send', async (req, res) => {
+  try {
+    const to = req.query.to || process.env.MAIL_TO || 'gastromir.kz@gmail.com';
+    const result = await sendFormEmail({
+      formType: 'diagnostic_test',
+      subject: 'Тестовое письмо проверки связи с сайтом GASTROMIR',
+      restaurant: 'Тестовый Запуск',
+      name: 'Администратор',
+      phone: '+7 701 514 14 04',
+      email: to,
+      message: `Это тестовое письмо для проверки работы почтового сервера.\nДата: ${new Date().toLocaleString('ru-RU', { timeZone: 'Asia/Almaty' })}`
+    });
+    res.json({ success: true, result });
+  } catch (err) {
+    console.error('[test-send endpoint error]:', err);
+    res.status(500).json({ success: false, error: err.message, stack: err.stack });
   }
 });
 
