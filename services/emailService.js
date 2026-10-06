@@ -3,12 +3,12 @@ import nodemailer from 'nodemailer';
 /**
  * Creates a reusable nodemailer transporter based on environment variables.
  */
-export function getEmailTransporter() {
+export function getEmailTransporter(overridePort = null, overrideSecure = null) {
   const host = process.env.SMTP_HOST || 'mail.gastromir.kz';
-  const port = parseInt(process.env.SMTP_PORT || '465', 10);
-  const secure = process.env.SMTP_SECURE !== undefined 
-    ? process.env.SMTP_SECURE === 'true' 
-    : port === 465;
+  const port = overridePort !== null ? overridePort : parseInt(process.env.SMTP_PORT || '465', 10);
+  const secure = overrideSecure !== null 
+    ? overrideSecure 
+    : (process.env.SMTP_SECURE !== undefined ? process.env.SMTP_SECURE === 'true' : port === 465);
   const user = process.env.SMTP_USER || 'admin@gastromir.kz';
   const pass = process.env.SMTP_PASS || '';
 
@@ -27,7 +27,10 @@ export function getEmailTransporter() {
     },
     tls: {
       rejectUnauthorized: false // Prevents certificate verification failures on shared hosting
-    }
+    },
+    connectionTimeout: 5000, // 5s connection timeout
+    greetingTimeout: 5000,   // 5s greeting timeout
+    socketTimeout: 8000      // 8s socket timeout
   });
 }
 
@@ -187,12 +190,33 @@ export async function sendFormEmail(submission) {
     });
   }
 
+  const sendWithTimeout = async (tp) => {
+    return Promise.race([
+      tp.sendMail(mailOptions),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('SMTP timeout (7s)')), 7000))
+    ]);
+  };
+
   try {
-    const info = await transporter.sendMail(mailOptions);
+    const info = await sendWithTimeout(transporter);
     console.log(`[EmailService] Email sent successfully to ${to}. MessageId: ${info.messageId}`);
     return { success: true, messageId: info.messageId };
   } catch (err) {
-    console.error('[EmailService] Error sending email via SMTP:', err.message);
+    console.warn('[EmailService] Primary SMTP attempt failed:', err.message);
+
+    // If initial attempt failed (e.g. port 465 blocked on cloud container), try port 587 (STARTTLS)
+    try {
+      const fallbackTransporter = getEmailTransporter(587, false);
+      if (fallbackTransporter) {
+        console.log('[EmailService] Retrying via port 587 (STARTTLS)...');
+        const info = await sendWithTimeout(fallbackTransporter);
+        console.log(`[EmailService] Email sent successfully via fallback port 587. MessageId: ${info.messageId}`);
+        return { success: true, messageId: info.messageId };
+      }
+    } catch (fallbackErr) {
+      console.error('[EmailService] Fallback port 587 also failed:', fallbackErr.message);
+    }
+
     return { success: false, error: err.message };
   }
 }

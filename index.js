@@ -1306,8 +1306,16 @@ app.post('/api/forms/submit', (req, res, next) => {
 
     const submission = insertResult.rows[0];
 
-    // 2. Dispatch email to gastromir.kz@gmail.com
-    const emailResult = await sendFormEmail({
+    // Respond immediately to the client so UI never hangs or waits for SMTP
+    res.status(201).json({
+      success: true,
+      message: 'Заявка успешно принята!',
+      id: submission.id,
+      file_url: fileUrl
+    });
+
+    // Dispatch email to gastromir.kz@gmail.com asynchronously in the background
+    sendFormEmail({
       formType: form_type,
       subject: subject || `Заявка с сайта: ${restaurant || name || 'GASTROMIR'}`,
       restaurant,
@@ -1322,14 +1330,8 @@ app.post('/api/forms/submit', (req, res, next) => {
         path: req.file.path,
         size: req.file.size
       } : null
-    });
-
-    res.status(201).json({
-      success: true,
-      message: 'Заявка успешно принята!',
-      id: submission.id,
-      file_url: fileUrl,
-      email_sent: !!emailResult.success
+    }).catch(emailErr => {
+      console.error('[EmailService Background Error]:', emailErr?.message || emailErr);
     });
   } catch (err) {
     console.error('Error handling form submission:', err);
