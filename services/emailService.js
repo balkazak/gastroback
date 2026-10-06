@@ -159,6 +159,102 @@ function escapeHtml(text) {
 }
 
 /**
+ * Sends notification via Telegram Bot API (HTTPS port 443, never blocked by cloud firewalls).
+ */
+export async function sendTelegramNotification(submission) {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  const chatId = process.env.TELEGRAM_CHAT_ID;
+  if (!token || !chatId) return null;
+
+  const titleMap = {
+    quick_purchase_list: '⚡ Быстрый список закупки',
+    contact_lead: '🤝 Заявка на сотрудничество',
+    price_request: '📊 Запрос оптового прайса',
+    horeca_lead: '🍽 Запрос условий HoReCa',
+    cart_invoice: '🛒 Заказ из корзины (Накладная)',
+    custom: '📩 Новая заявка'
+  };
+
+  const title = titleMap[submission.formType] || '📩 Новая заявка';
+  const lines = [
+    `<b>${title} — GASTROMIR.KZ</b>`,
+    submission.restaurant ? `🏢 <b>Заведение:</b> ${escapeHtml(submission.restaurant)}` : null,
+    submission.name ? `👤 <b>Имя:</b> ${escapeHtml(submission.name)}` : null,
+    submission.phone ? `📞 <b>Телефон:</b> <a href="tel:${submission.phone}">${submission.phone}</a>` : null,
+    submission.email ? `📧 <b>Email:</b> ${submission.email}` : null,
+    submission.file ? `📎 <b>Файл:</b> <a href="https://gastroback-production.up.railway.app/uploads/attachments/${submission.file.filename}">${escapeHtml(submission.file.originalname || submission.file.filename)}</a>` : null,
+    submission.message ? `\n💬 <b>Сообщение:</b>\n${escapeHtml(submission.message)}` : null
+  ].filter(Boolean);
+
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text: lines.join('\n'),
+        parse_mode: 'HTML',
+        disable_web_page_preview: false
+      })
+    });
+    const data = await res.json();
+    if (data.ok) {
+      console.log(`[Telegram ✅ SUCCESS] Notification delivered to chat: ${chatId}`);
+      return { success: true };
+    } else {
+      console.error(`[Telegram ❌] Send failed: ${data.description}`);
+      return { success: false, error: data.description };
+    }
+  } catch (err) {
+    console.error(`[Telegram ❌] Network error: ${err.message}`);
+    return { success: false, error: err.message };
+  }
+}
+
+/**
+ * Sends transactional email via Resend HTTPS REST API (Port 443, never blocked by Railway).
+ */
+export async function sendResendEmail(submission) {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) return null;
+
+  const to = process.env.MAIL_TO || 'gastromir.kz@gmail.com';
+  const from = process.env.RESEND_FROM || 'GASTROMIR <onboarding@resend.dev>';
+  const subject = submission.subject || `[GASTROMIR] Новая заявка: ${submission.restaurant || submission.name || 'Сайт'}`;
+  const { html, text } = buildEmailContent(submission);
+
+  console.log(`[Resend 🚀] Sending email via Resend HTTPS API to ${to}...`);
+
+  try {
+    const res = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        from,
+        to: [to],
+        subject,
+        html,
+        text
+      })
+    });
+    const data = await res.json();
+    if (res.ok) {
+      console.log(`[Resend ✅ SUCCESS] Email delivered! Resend ID: ${data.id}`);
+      return { success: true, messageId: data.id, provider: 'resend' };
+    } else {
+      console.error('[Resend ❌] Send failed:', data);
+      return { success: false, error: data.message || JSON.stringify(data) };
+    }
+  } catch (err) {
+    console.error(`[Resend ❌] Network error: ${err.message}`);
+    return { success: false, error: err.message };
+  }
+}
+
+/**
  * Sends form submission notification to target email.
  */
 export async function sendFormEmail(submission) {
@@ -171,6 +267,21 @@ export async function sendFormEmail(submission) {
   console.log(`[EmailService] From: ${from}`);
   console.log(`[EmailService] Subject: "${subject}"`);
   console.log(`[EmailService] Has file: ${Boolean(submission.file)}`);
+
+  // 1. Dispatch Telegram notification if configured (instant, reliable)
+  if (process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID) {
+    sendTelegramNotification(submission).catch(err => {
+      console.error('[EmailService Telegram Background Error]:', err);
+    });
+  }
+
+  // 2. Dispatch via Resend HTTPS API if configured
+  if (process.env.RESEND_API_KEY) {
+    const resendRes = await sendResendEmail(submission);
+    if (resendRes && resendRes.success) {
+      return resendRes;
+    }
+  }
 
   const transporter = getEmailTransporter();
   if (!transporter) {
